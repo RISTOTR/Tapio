@@ -16,9 +16,11 @@ modeling and reproducible validation. There is no frontend or product workflow y
 - Generative (future): an LLM selects typed tools and explains their structured
   results. It does not calculate balances, invent measurements or make tax decisions.
 
-The current repository implements only the schema, configuration, health endpoint
-and energy validation contract. Empty modules reserve later pipeline/ML stages;
-there is no importer, trained model, retrieval system or agent.
+The repository implements the schema, configuration, health endpoint and energy
+validation contract. Energy ingestion now has format-independent normalization,
+a transactional loader, inspected Finnish CSV source parser, local import CLI
+and read-only monthly verification; see [energy ingestion](energy_ingestion.md).
+There is no trained model, retrieval system or agent.
 
 ## Domains and evidence
 
@@ -30,8 +32,9 @@ Solar export is netted electricity exported from the property, not gross PV gene
 
 Import runs preserve source filename, SHA-256, parser version and metadata. Hashes
 are indexed but not unique: retries and parser revisions must remain auditable.
-A later importer must define idempotency deliberately. Source documents retain their
-hashes; this schema does not store document binaries or personal source files.
+Energy loading defines idempotency by source type, raw SHA-256 and parser version;
+audit attempts remain separate from the original successful import. Source documents
+retain their hashes; this schema does not store document binaries or personal source files.
 
 ## Storage and API
 
@@ -53,19 +56,21 @@ SELECT 1 and reports 503 when PostgreSQL is unavailable; it is not a schema chec
 
 ## Validation from day one
 
-Pandera defines the contract between normalization and loading, before ingestion
-exists. The current Polars contract is strict: all four required fields, UTC
+Pandera defines the contract between normalization and loading, established before
+the source importer was implemented. The current Polars contract is strict: all four required fields, UTC
 microsecond timestamps, Float64 measurements, nonnegative finite energy values,
 and nullable temperature within -60 to 60 degrees Celsius. These bounds are
 validation policy, not a climatological claim. It rejects invalid values without
-coercing them. Raw parsing and decimal conversion for database insertion come later.
+coercing them. The source parser reads text fields explicitly; normalization handles
+decimal commas, source units and timestamps. The loader checks decimal
+representability before insertion.
 See [Pandera's Polars integration](https://pandera.readthedocs.io/en/stable/polars.html).
 
 Validate each metering point/source-grain series separately. Duplicate timestamps
 are rejected; neither summing nor keeping an arbitrary row is safe. The database
-also enforces uniqueness on meter + timestamp + grain. The future normalizer must
-resolve Europe/Helsinki local times and daylight-saving ambiguities using source
-offsets, then convert to UTC. Naive timestamps are rejected at this boundary.
+also enforces uniqueness on meter + timestamp + grain. The normalizer resolves
+Europe/Helsinki local times using source offsets when available, then converts to UTC. Ambiguous or nonexistent naive local times are
+rejected; timezone-naive timestamps never reach the canonical validation boundary.
 
 ## Decisions and constraints
 

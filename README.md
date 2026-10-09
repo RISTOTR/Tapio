@@ -51,3 +51,17 @@ uv run ruff format --check .
 uv run ruff check .
 uv run pytest
 ```
+
+## Energy ingestion
+
+Import an inspected Finnish energy export using an explicit metering-point code:
+
+```sh
+uv run python -m data_pipeline.ingest.energy --file data/raw/2025.csv --metering-point <code>
+uv run python -m data_pipeline.verify_energy --metering-point <code>
+```
+
+The importer returns a JSON summary and exits nonzero on failure. Exact successful
+repeats are audited and skipped; overlapping hours are rejected. See
+[energy ingestion](docs/energy_ingestion.md) for formats, DST and failure policies,
+and the [verification report](docs/energy_ingestion_review.md) for results.

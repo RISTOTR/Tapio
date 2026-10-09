@@ -190,3 +190,24 @@ Python enum member names are stored in PostgreSQL.
 Unique business keys: metering_points.external_code and energy_readings
 (metering_point_id, timestamp, source_grain). Import hashes, invoice numbers,
 allocations and tax reviews are not unique; workflow cardinalities remain open.
+
+## Energy import audit metadata
+
+No schema changes. The energy loader stores `metering_point`, `source_grain`,
+`outcome`, `rows_parsed` and `error_code` in ImportRun.source_metadata. Outcomes
+are imported, already_imported or failed. A skipped repeat is COMPLETED with
+row_count=0 and original_import_run_id; it is not treated as an original successful
+load. Failed attempts have row_count=0. Only an imported outcome contributes new
+readings. row_count is rows loaded by this attempt, not rows parsed. Parser failures
+before a canonical frame exists report rows_parsed=0 (not an estimate of file lines).
+
+The metering point is explicit. Quantities remain kWh, including netted solar grid
+export. Canonical Float64 values must round-trip from source decimal text and fit
+NUMERIC(20,6) exactly; excess precision is rejected. Monthly verification uses local
+Europe/Helsinki boundaries against timezone-aware database instants.
+
+For the inspected annual energy CSVs, temperature_c is the source daily mean
+repeated for each hourly reading, not an hourly sensor observation. The day export
+has no temperature and stores NULL. Monthly AVG is consequently an average over
+available hourly rows (including repeated daily means), not an independently
+measured monthly weather observation.
