@@ -10,9 +10,10 @@ modeling and reproducible validation. There is no frontend or product workflow y
 
 - Deterministic: PostgreSQL stores facts and provenance. Python, Polars and SQL
   perform validation, normalization, reconciliation and calculations.
-- Statistical (future): scikit-learn generates predictions and scores. Time-series
-  features must use past information only, with chronological evaluation and
-  documented baselines. Predictions remain distinct from observed facts.
+- Statistical: offline scikit-learn experiments compare predictions with a seasonal
+  baseline using chronological evaluation. Features use information available before
+  each target interval under explicit availability assumptions. Predictions remain
+  generated local artifacts, separate from observed database facts.
 - Generative (future): an LLM selects typed tools and explains their structured
   results. It does not calculate balances, invent measurements or make tax decisions.
 
@@ -20,7 +21,8 @@ The repository implements the schema, configuration, health endpoint and energy
 validation contract. Energy ingestion now has format-independent normalization,
 a transactional loader, inspected Finnish CSV source parser, local import CLI
 and read-only monthly verification; see [energy ingestion](energy_ingestion.md).
-There is no trained model, retrieval system or agent.
+Experiment 01 fits models offline; there is no deployed prediction endpoint,
+retrieval system or agent. See [the experiment protocol](ml_experiment_01.md).
 
 ## Domains and evidence
 
@@ -108,3 +110,27 @@ are ignored. Only explicitly named synthetic sample CSV/JSON files are allowed i
 data/sample. Gitignore prevents ordinary accidental staging, not force-add or
 sensitive text pasted into source code; review every diff. Recreate ignored data
 directories after cloning using the README command. No personal data is included.
+
+## Experiment availability and privacy
+
+Hourly prediction uses elapsed UTC history and Finnish civil-time calendar features.
+Europe/Helsinki is the time-zone identifier; the property is in Viitasaari. The
+weather source location is not specified by the CSV. Full-day realized means are
+not available at that day's start, so Experiment 01 uses the previous completed
+local day's mean and compares against a no-temperature ablation. This assumes
+next-midnight weather availability and immediate availability of the previous
+hour's completed consumption; provider publication latency remains unverified.
+
+ML experiments query facts read-only, fit on chronological training rows only, and
+never write predictions into EnergyReading. Detailed outputs and plots are ignored;
+only selected aggregate experiment metadata/results are eligible for version control.
+No schema migration or model-serving infrastructure is introduced.
+
+Experiment 02 reuses this offline pipeline with a fixed 2025 training year and
+January–February 2026 holdout. It evaluates hourly, daily and weekly persistence on
+one shared cohort, plus the original model configurations and weather ablations.
+Previous-hour persistence is the strongest winter baseline; Ridge's modest gain
+and HGB's loss do not establish operational readiness. Weather source assumed
+FMI-derived; exact station/publication latency unverified. Source representativeness
+for Viitasaari and real reporting delays remain unresolved. See
+[Experiment 02](ml_experiment_02.md); no serving or database writes were introduced.

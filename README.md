@@ -65,3 +65,25 @@ The importer returns a JSON summary and exits nonzero on failure. Exact successf
 repeats are audited and skipped; overlapping hours are rejected. See
 [energy ingestion](docs/energy_ingestion.md) for formats, DST and failure policies,
 and the [verification report](docs/energy_ingestion_review.md) for results.
+
+## Consumption experiment
+
+```sh
+uv run python -m ml.experiments.temperature_consumption --metering-point <code>
+```
+
+Runs a fixed chronological comparison with seasonal naive, Ridge and HGB.
+Detailed results and plots remain ignored under `ml/evaluation/output/`.
+See [Experiment 01](docs/ml_experiment_01.md) for availability assumptions and results.
+
+Experiment 02 uses the fixed January–February 2026 winter holdout and compares
+last-hour, daily and weekly naive baselines with the same Ridge/HGB models:
+
+```sh
+uv run python -m ml.experiments.temperature_consumption --metering-point 643006966022870423 --winter
+```
+
+See [winter results](docs/ml_experiment_02.md) and
+[verification](docs/ml_experiment_02_review.md). Persistence is the strongest winter
+baseline; Ridge improves MAE by 3.18%, while HGB is worse. Detailed outputs remain
+ignored; the reviewed aggregate snapshot is in `ml/evaluation/experiment_02_summary.json`.

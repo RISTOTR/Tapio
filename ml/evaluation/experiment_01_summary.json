@@ -1,0 +1,119 @@
+{
+  "experiment": "01_temperature_consumption",
+  "created_at_utc": "2026-10-09T08:15:34.501779+00:00",
+  "protocol": "rolling_one_hour_ahead_fixed_fit",
+  "python_version": "3.12.13",
+  "sklearn_version": "1.9.1",
+  "polars_version": "1.44.2",
+  "numpy_version": "2.5.3",
+  "dataset_sha256": "81ecfb1a18f56e165a3ed16eb551f15f48277948c85330f7406143ba16b1e451",
+  "source_code_sha256": "86b2d4c39ed49e49a351443312f7a0eda0e360694b7d68d91fee53af6e9d45cf",
+  "uv_lock_sha256": "03abf149c57f7f74c7f55cfc1a21b11a445f292cc9f88d222c765ea7a9b0b382",
+  "period": {
+    "start_inclusive": "2025-01-01T00:00:00+02:00",
+    "test_start_inclusive": "2026-08-01T00:00:00+03:00",
+    "end_exclusive": "2026-10-06T00:00:00+03:00"
+  },
+  "rows": {
+    "raw": 15431,
+    "warmup_dropped": 168,
+    "other_missing_dropped": 0,
+    "train": 13679,
+    "test": 1584
+  },
+  "actual_bounds_utc": {
+    "train_first": "2025-01-07 22:00:00+00:00",
+    "train_last": "2026-07-31 20:00:00+00:00",
+    "test_first": "2026-07-31 21:00:00+00:00",
+    "test_last": "2026-10-05 20:00:00+00:00"
+  },
+  "features": [
+    "hour_of_day",
+    "day_of_week",
+    "month",
+    "is_weekend",
+    "temperature_c",
+    "heating_degree_17",
+    "consumption_lag_1h",
+    "consumption_lag_24h",
+    "consumption_lag_168h",
+    "consumption_rolling_mean_24h",
+    "consumption_rolling_mean_168h"
+  ],
+  "ablation_features": [
+    "hour_of_day",
+    "day_of_week",
+    "month",
+    "is_weekend",
+    "consumption_lag_1h",
+    "consumption_lag_24h",
+    "consumption_lag_168h",
+    "consumption_rolling_mean_24h",
+    "consumption_rolling_mean_168h"
+  ],
+  "weather_policy": "Previous complete local day mean; assumed available next midnight.",
+  "weather_granularity": "Daily mean, never hourly weather or current-day realized mean.",
+  "configs": {
+    "ridge": {
+      "alpha": 1.0,
+      "solver": "svd"
+    },
+    "hist_gradient_boosting": {
+      "learning_rate": 0.05,
+      "max_iter": 200,
+      "max_leaf_nodes": 15,
+      "min_samples_leaf": 20,
+      "l2_regularization": 1.0,
+      "early_stopping": false,
+      "random_state": 42
+    },
+    "threads": 1,
+    "numeric_preprocessing": "Ridge: train-fitted StandardScaler; HGB: unscaled",
+    "calendar_preprocessing": "Ridge: one-hot fixed calendar domains; HGB: categorical"
+  },
+  "metrics": {
+    "seasonal_naive": {
+      "n": 1584,
+      "mae_kwh": 0.3377329545454546,
+      "rmse_kwh": 0.5233162749342993,
+      "skill_mae": 0.0
+    },
+    "ridge": {
+      "n": 1584,
+      "mae_kwh": 0.21773441436101434,
+      "rmse_kwh": 0.343106672959958,
+      "skill_mae": 0.35530598530410795
+    },
+    "hist_gradient_boosting": {
+      "n": 1584,
+      "mae_kwh": 0.21010815719094797,
+      "rmse_kwh": 0.32849070812863995,
+      "skill_mae": 0.3778867168182427
+    },
+    "ridge_without_temperature": {
+      "n": 1584,
+      "mae_kwh": 0.2192962890175096,
+      "rmse_kwh": 0.34361073340697434,
+      "skill_mae": 0.35068140059753894
+    },
+    "hist_gradient_boosting_without_temperature": {
+      "n": 1584,
+      "mae_kwh": 0.21005345143562792,
+      "rmse_kwh": 0.3279282816989838,
+      "skill_mae": 0.37804869614120706
+    }
+  },
+  "negative_prediction_counts": {
+    "seasonal_naive": 0,
+    "ridge": 0,
+    "hist_gradient_boosting": 0,
+    "ridge_without_temperature": 0,
+    "hist_gradient_boosting_without_temperature": 0
+  },
+  "best_test_mae_model": "hist_gradient_boosting_without_temperature",
+  "interpretation": "Best on this test period only; no test-set tuning.",
+  "reproducibility_check": {
+    "metrics_equal_on_repeat": true,
+    "prediction_csv_equal_on_repeat": true
+  }
+}

@@ -29,3 +29,7 @@ __pycache__/
 !/data/sample/README.md
 !/data/sample/synthetic_*.[cC][sS][vV]
 !/data/sample/synthetic_*.json
+
+# ML results may reveal household usage; keep every generated output private.
+/ml/evaluation/output/
+/matplotlib-cache/
