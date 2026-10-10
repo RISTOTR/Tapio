@@ -87,3 +87,18 @@ See [winter results](docs/ml_experiment_02.md) and
 [verification](docs/ml_experiment_02_review.md). Persistence is the strongest winter
 baseline; Ridge improves MAE by 3.18%, while HGB is worse. Detailed outputs remain
 ignored; the reviewed aggregate snapshot is in `ml/evaluation/experiment_02_summary.json`.
+
+## Bank ingestion
+
+After `uv run alembic upgrade head`, import an inspected bank CSV using a stable local
+account alias (not an account number):
+
+```sh
+uv run python -m data_pipeline.ingest.bank --file /Users/tyokone/Downloads/tapahtumat20250101-20251231.csv --account-key primary
+uv run python -m data_pipeline.verify_bank --account-key primary --private-output
+```
+
+See [bank ingestion](docs/bank_ingestion.md) and [verification](docs/bank_ingestion_review.md).
+Category/context rules are weak suggestions; recurrence and refund matches are
+candidates. No classifier, tax decisions or invoice reconciliation is implemented.
+Detailed generated outputs stay under ignored `data/processed/bank/`.

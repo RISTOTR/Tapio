@@ -56,6 +56,11 @@ class EnergyReading(Base):
 
 class Transaction(Base):
     __tablename__ = "transactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_namespace", "source_transaction_id", name="uq_bank_source_identity"
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     booking_date: Mapped[date] = mapped_column()
     value_date: Mapped[date | None] = mapped_column()
@@ -70,6 +75,13 @@ class Transaction(Base):
     ultimate_recipient: Mapped[str | None] = mapped_column()
     reference: Mapped[str | None] = mapped_column()
     message: Mapped[str | None] = mapped_column()
+    # Nullable only for legacy/non-bank records. Bank loader requires all source identity fields.
+    source_namespace: Mapped[str | None] = mapped_column()
+    source_transaction_id: Mapped[str | None] = mapped_column()
+    transaction_type_code: Mapped[str | None] = mapped_column()
+    raw_source: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    rule_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Initial weak suggestions; human decisions live separately in TaxReview.
     category: Mapped[str | None] = mapped_column()
     business_context: Mapped[BusinessContext | None] = mapped_column(
         Enum(BusinessContext, name="businesscontext")

@@ -70,8 +70,13 @@ Python enum member names are stored in PostgreSQL.
 | ultimate_recipient | VARCHAR | yes | Underlying recipient, if identified. |
 | reference | VARCHAR | yes | Payment reference as text, preserving leading zeroes. |
 | message | VARCHAR | yes | Source payment message. |
-| category | VARCHAR | yes | Extensible transaction category. |
-| business_context | VARCHAR(8) | yes | Context classification; not a confirmed tax treatment. |
+| category | VARCHAR | yes | Initial weak economic-category suggestion for bank imports; not tax treatment. |
+| business_context | VARCHAR(8) | yes | Context classification; transaction imports use initial weak suggestions, never confirmed tax treatment. |
+| source_namespace | VARCHAR | yes | Bank source family plus explicit local account alias; required by bank loader. |
+| source_transaction_id | VARCHAR | yes | Opaque Arkistointitunnus; required by bank loader. |
+| transaction_type_code | VARCHAR | yes | Raw Laji code retained as text. |
+| raw_source | JSONB | yes | Private original source field strings, including reference wrapper and recipient banking details. |
+| rule_metadata | JSONB | yes | Weak-suggestion rule version and rule identifiers; no confirmed decisions. |
 | source_file | VARCHAR | no | Transaction source filename retained alongside import provenance. |
 | import_run_id | CHAR(32) | no | Foreign key to import_runs.id. |
 
@@ -211,3 +216,14 @@ repeated for each hourly reading, not an hourly sensor observation. The day expo
 has no temperature and stores NULL. Monthly AVG is consequently an average over
 available hourly rows (including repeated daily means), not an independently
 measured monthly weather observation.
+
+## Bank ingestion (migration 0002)
+
+`transactions(source_namespace, source_transaction_id)` is unique for populated
+bank identities. Null legacy values are allowed; no fallback content fingerprint
+is used. Identical archive-ID overlaps skip; changed raw fields conflict atomically.
+TaxReview confirmed fields remain separate and untouched. Bank ImportRun metadata
+records source_namespace, outcome, rows_parsed, rows_skipped_duplicates, error_code,
+and original_import_run_id for exact repeats. row_count is rows newly loaded.
+See [bank ingestion](bank_ingestion.md) for reference wrappers, exact Decimal rules,
+account identity limitations, zero rejection and weak-label semantics.

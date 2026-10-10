@@ -134,3 +134,15 @@ and HGB's loss do not establish operational readiness. Weather source assumed
 FMI-derived; exact station/publication latency unverified. Source representativeness
 for Viitasaari and real reporting delays remain unresolved. See
 [Experiment 02](ml_experiment_02.md); no serving or database writes were introduced.
+
+## Bank source facts and weak suggestions
+
+Bank ingestion uses a source-specific all-string Polars reader, exact Decimal/date
+conversion, Pandera contracts, deterministic enrichment and a transactional SQLAlchemy
+loader. Migration 0002 adds scoped archive identity and private raw/rule provenance;
+0001 and energy ML remain unchanged. Raw source fields stay separate from normalized
+merchant identity. Category and business context are independent weak suggestions;
+TaxReview remains the human-confirmed authority. Imports never update previous facts
+or reviews. File hashes audit attempts; account-scoped archive IDs deduplicate overlaps
+without collapsing genuine same-amount payments. Monthly patterns and refund pairs
+are candidates only. See [bank ingestion](bank_ingestion.md).
