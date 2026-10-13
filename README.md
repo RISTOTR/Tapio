@@ -80,7 +80,7 @@ Experiment 02 uses the fixed January–February 2026 winter holdout and compares
 last-hour, daily and weekly naive baselines with the same Ridge/HGB models:
 
 ```sh
-uv run python -m ml.experiments.temperature_consumption --metering-point 643006966022870423 --winter
+uv run python -m ml.experiments.temperature_consumption --metering-point <code> --winter
 ```
 
 See [winter results](docs/ml_experiment_02.md) and
@@ -94,13 +94,14 @@ After `uv run alembic upgrade head`, import an inspected bank CSV using a stable
 account alias (not an account number):
 
 ```sh
-uv run python -m data_pipeline.ingest.bank --file /Users/tyokone/Downloads/tapahtumat20250101-20251231.csv --account-key primary
+uv run python -m data_pipeline.ingest.bank --file /private/path/transactions.csv --account-key primary
 uv run python -m data_pipeline.verify_bank --account-key primary --private-output
 ```
 
 See [bank ingestion](docs/bank_ingestion.md) and [verification](docs/bank_ingestion_review.md).
 Category/context rules are weak suggestions; recurrence and refund matches are
-candidates. No classifier, tax decisions or invoice reconciliation is implemented.
+candidates. Document-backed reconciliation is provided by the separate workflow below;
+no automatic tax decisions are made.
 Detailed generated outputs stay under ignored `data/processed/bank/`.
 
 ## Human transaction labels
@@ -122,3 +123,16 @@ uv run python -m data_pipeline.labels.export_ground_truth --account-key primary 
 
 Final reviews are protected from replacement. Ground-truth export accepts only
 human-reviewed rows. Transaction classifier training remains a later phase.
+
+### Local document ingestion and reconciliation
+
+```sh
+uv run python -m data_pipeline.ingest.documents --file /private/path/invoice.pdf
+uv run python -m data_pipeline.reconcile.invoices --account-key primary
+uv run python -m data_pipeline.verify_documents
+```
+
+Apply migration 0005 first with `uv run alembic upgrade head`. Exact-match confirmation
+is explicit via `--confirm-exact`; ambiguous duplicate payments/refunds remain candidates.
+See [ingestion](docs/document_ingestion.md), [reconciliation](docs/document_reconciliation.md)
+and [verification findings](docs/document_ingestion_review.md).

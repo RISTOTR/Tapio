@@ -4,15 +4,25 @@ version = "0.1.0"
 description = "Deterministic data foundation for rural property and forestry analysis"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "pydantic>=2.10,<3",
-  "pydantic-settings>=2.7,<3", "sqlalchemy>=2.0,<2.1", "alembic>=1.14,<2",
-  "psycopg[binary]>=3.2,<4", "polars>=1.20,<2", "pandera[polars]>=0.23,<1",
-  "scikit-learn>=1.6,<2", "matplotlib>=3.9,<4", "numpy>=1.26,<3",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+  "sqlalchemy>=2.0,<2.1",
+  "alembic>=1.14,<2",
+  "psycopg[binary]>=3.2,<4",
+  "polars>=1.20,<2",
+  "pandera[polars]>=0.23,<1",
+  "scikit-learn>=1.6,<2",
+  "matplotlib>=3.9,<4",
+  "numpy>=1.26,<3",
   "threadpoolctl>=3.5,<4",
-  "sentence-transformers==3.4.1", "transformers>=4.41,<4.50",
+  "sentence-transformers==3.4.1",
+  "transformers>=4.41,<4.50",
   "torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
   "numpy<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
   "torch>=2.6,<3; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+  "pypdf>=6,<7",
 ]
 [dependency-groups]
 dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.9,<1"]

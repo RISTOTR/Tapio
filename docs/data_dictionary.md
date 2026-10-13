@@ -259,3 +259,26 @@ are no-ops; conflicts roll back without replacement. See
 Migration 0004 adds TRAVEL to the classification category CHECK constraint.
 New human imports use taxonomy version 2; historical versions remain unchanged.
 Optional review_group is private queue metadata only, with no database column.
+
+## Document ingestion additions (0005)
+
+`documents.metadata` retains detailed kind, source vendor/parser version, page count,
+canonical bill/sale/contract facts and warnings. Existing documenttype values remain
+unchanged: invoices use INVOICE, sale summaries TIMBER_SALE, contracts OTHER.
+ImportRun carries attempt/completion timestamps and failed/idempotent outcomes.
+
+`invoice_lines.source_metadata` is non-null JSONB (default `{}`): source page and line
+number, usage point, price basis, printed price quantum and warnings. Gross-priced
+utility unit prices are explicitly distinguished from net-priced forestry services.
+
+`transaction_invoice_allocations.status` is non-null text, checked against CANDIDATE,
+CONFIRMED and REJECTED; default CANDIDATE. `evidence` is non-null JSONB (default `{}`),
+containing matching signals/version and previous evaluations where applicable.
+`created_at` is TIMESTAMPTZ. The transaction/invoice pair is unique. Signed allocated
+amounts express positive payments and negative refunds; source bank amounts are not
+changed. Candidate contributions are not confirmed balances.
+
+`transaction_reversal_candidates` has UUID id, indexed debit_id and credit_id foreign
+keys to transactions, non-null JSONB evidence and TIMESTAMPTZ created_at. Pairs are
+unique and IDs must differ. Every row is a candidate; no reversal is silently chosen.
+Multiple pairs sharing a credit are deliberately allowed.

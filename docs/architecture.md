@@ -163,3 +163,17 @@ ambiguous rows remain available for audit but outside ground truth. Aggregate
 rule agreement uses frozen snapshots and is not classifier accuracy. There is no
 transaction-classifier training or reconciliation in this phase. See
 [workflow](transaction_labeling.md) and [verification](transaction_labeling_review.md).
+
+## Deterministic documents and reconciliation
+
+Local pypdf extraction now feeds source-specific Pydantic/Decimal parsers and an
+atomic append-only document loader. Existing Document, Invoice/InvoiceLine,
+EnergyBillDetails and ForestrySale/ForestrySaleLine models retain structured facts;
+private Document metadata carries full canonical provenance and contract facts.
+Consolidated bills retain separate usage points under one payable invoice.
+
+Migration 0005 adds line provenance, allocation status/evidence/timestamp and a
+separate transaction reversal candidate table. Reconciliation uses explicit vendor,
+amount, reference and date evidence. Ambiguous duplicate/refund relations remain
+candidates; no source transaction or human classification label is changed. See
+[document ingestion](document_ingestion.md) and [reconciliation](document_reconciliation.md).

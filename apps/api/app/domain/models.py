@@ -130,6 +130,9 @@ class InvoiceLine(Base):
     __tablename__ = "invoice_lines"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     invoice_id: Mapped[UUID] = mapped_column(ForeignKey("invoices.id"), index=True)
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default="{}"
+    )
     description: Mapped[str] = mapped_column()
     product_code: Mapped[str | None] = mapped_column()
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
@@ -143,6 +146,13 @@ class InvoiceLine(Base):
 
 class TransactionInvoiceAllocation(Base):
     __tablename__ = "transaction_invoice_allocations"
+    __table_args__ = (
+        UniqueConstraint("transaction_id", "invoice_id", name="uq_allocation_pair"),
+        CheckConstraint("status IN ('CANDIDATE','CONFIRMED','REJECTED')", name="allocation_status"),
+    )
+    status: Mapped[str] = mapped_column(default="CANDIDATE", server_default="CANDIDATE")
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     transaction_id: Mapped[UUID] = mapped_column(ForeignKey("transactions.id"), index=True)
     invoice_id: Mapped[UUID] = mapped_column(ForeignKey("invoices.id"), index=True)
@@ -262,4 +272,19 @@ class TransactionLabelReview(Base):
     label_source: Mapped[str] = mapped_column(default="review_queue_csv_v1")
     review_file_sha256: Mapped[str | None] = mapped_column(String(64))
     taxonomy_version: Mapped[str] = mapped_column(default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TransactionReversalCandidate(Base):
+    """Separate non-authoritative refund/debit links; preserve every possible pair."""
+
+    __tablename__ = "transaction_reversal_candidates"
+    __table_args__ = (
+        UniqueConstraint("debit_id", "credit_id", name="uq_reversal_pair"),
+        CheckConstraint("debit_id != credit_id", name="distinct_reversal_transactions"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    debit_id: Mapped[UUID] = mapped_column(ForeignKey("transactions.id"), index=True)
+    credit_id: Mapped[UUID] = mapped_column(ForeignKey("transactions.id"), index=True)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
