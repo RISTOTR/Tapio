@@ -227,3 +227,35 @@ records source_namespace, outcome, rows_parsed, rows_skipped_duplicates, error_c
 and original_import_run_id for exact repeats. row_count is rows newly loaded.
 See [bank ingestion](bank_ingestion.md) for reference wrappers, exact Decimal rules,
 account identity limitations, zero rejection and weak-label semantics.
+
+## transaction_label_reviews (migration 0003)
+
+Classification ground truth is separate from TaxReview and weak Transaction fields.
+
+| Column | Database type | Nullable | Meaning |
+| --- | --- | --- | --- |
+| id | UUID | no | Application-generated primary key. |
+| transaction_id | UUID | no | Unique indexed FK to transactions.id; one active review. |
+| suggested_category_snapshot | VARCHAR | no | Frozen weak category at initial queue creation; audit only. |
+| suggested_context_snapshot | VARCHAR | no | Frozen weak context at initial queue creation; audit only. |
+| confirmed_category | VARCHAR | yes | Human economic label from the 14-category taxonomy. |
+| confirmed_business_context | VARCHAR | yes | PERSONAL, PROPERTY, FORESTRY or UNKNOWN; no tax treatment. |
+| review_status | VARCHAR | no | UNREVIEWED, REVIEWED or SKIPPED_AMBIGUOUS. |
+| reviewer | VARCHAR | yes | Operator-supplied reviewer alias; required for final states. |
+| reviewed_at | TIMESTAMPTZ | yes | UTC import instant for a final review. |
+| review_notes | VARCHAR | yes | Private human notes, including unresolved relationship evidence. |
+| label_source | VARCHAR | no | review_queue_csv_v1 for drafts; human_csv_v1 after human import. |
+| review_file_sha256 | VARCHAR(64) | yes | Exact imported file hash; required for final states. |
+| taxonomy_version | VARCHAR | no | Version 1 for this label contract. |
+| created_at | TIMESTAMPTZ | no | Database creation time. |
+
+CHECK constraints validate labels/status and require both confirmed labels only
+for REVIEWED. Other statuses require null confirmed labels. Final states require
+a nonempty reviewer, reviewed_at and file hash; drafts have no reviewer/time.
+Application import also requires a note for SKIPPED_AMBIGUOUS. Identical retries
+are no-ops; conflicts roll back without replacement. See
+[transaction labeling](transaction_labeling.md) for taxonomy and correction policy.
+
+Migration 0004 adds TRAVEL to the classification category CHECK constraint.
+New human imports use taxonomy version 2; historical versions remain unchanged.
+Optional review_group is private queue metadata only, with no database column.

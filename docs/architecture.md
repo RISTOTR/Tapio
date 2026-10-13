@@ -142,7 +142,24 @@ conversion, Pandera contracts, deterministic enrichment and a transactional SQLA
 loader. Migration 0002 adds scoped archive identity and private raw/rule provenance;
 0001 and energy ML remain unchanged. Raw source fields stay separate from normalized
 merchant identity. Category and business context are independent weak suggestions;
-TaxReview remains the human-confirmed authority. Imports never update previous facts
+TaxReview remains separate for tax treatment. Imports never update previous facts
 or reviews. File hashes audit attempts; account-scoped archive IDs deduplicate overlaps
 without collapsing genuine same-amount payments. Monthly patterns and refund pairs
 are candidates only. See [bank ingestion](bank_ingestion.md).
+
+## Human classification review
+
+Migration 0003 introduces TransactionLabelReview as the authority for confirmed
+classification labels; TaxReview remains the separate tax-treatment concept.
+A deterministic stratified sampler creates private CSV queues and frozen weak
+suggestion snapshots. It never fills human labels. A transactional importer validates
+source facts, taxonomy and registered review identity, recording reviewer, UTC import
+time, file hash and method. Advisory locking serializes workflow writers; final
+reviews cannot be silently replaced. Database checks enforce label/status shape.
+
+The ground-truth projection includes only REVIEWED rows and excludes rule features
+and banking identifiers. UNKNOWN can be a deliberate confirmed label. Skipped
+ambiguous rows remain available for audit but outside ground truth. Aggregate
+rule agreement uses frozen snapshots and is not classifier accuracy. There is no
+transaction-classifier training or reconciliation in this phase. See
+[workflow](transaction_labeling.md) and [verification](transaction_labeling_review.md).

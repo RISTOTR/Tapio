@@ -3,7 +3,16 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Numeric,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -204,3 +213,53 @@ class TaxReview(Base):
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     review_notes: Mapped[str | None] = mapped_column()
+
+
+class TransactionLabelReview(Base):
+    """Classification ground truth, independent of rule suggestions and TaxReview."""
+
+    __tablename__ = "transaction_label_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            "review_status IN ('UNREVIEWED','REVIEWED','SKIPPED_AMBIGUOUS')",
+            name="ck_label_status",
+        ),
+        CheckConstraint(
+            "confirmed_category IN ('ELECTRICITY','GRID_DISTRIBUTION','FORESTRY_SERVICE',"
+            "'TIMBER_INCOME','TAX','GROCERIES','FUEL','INSURANCE','MAINTENANCE','TRANSFER',"
+            "'SUBSCRIPTION','TRAVEL','OTHER','UNKNOWN')",
+            name="ck_label_category",
+        ),
+        CheckConstraint(
+            "confirmed_business_context IN ('PERSONAL','PROPERTY','FORESTRY','UNKNOWN')",
+            name="ck_label_context",
+        ),
+        CheckConstraint(
+            "(review_status = 'REVIEWED' AND confirmed_category IS NOT NULL "
+            "AND confirmed_business_context IS NOT NULL) OR "
+            "(review_status != 'REVIEWED' AND confirmed_category IS NULL "
+            "AND confirmed_business_context IS NULL)",
+            name="ck_label_confirmation",
+        ),
+        CheckConstraint(
+            "(review_status = 'UNREVIEWED' AND reviewed_at IS NULL AND reviewer IS NULL) OR "
+            "(review_status != 'UNREVIEWED' AND reviewed_at IS NOT NULL "
+            "AND reviewer IS NOT NULL AND length(trim(reviewer)) > 0 "
+            "AND review_file_sha256 IS NOT NULL)",
+            name="ck_label_reviewer",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    transaction_id: Mapped[UUID] = mapped_column(ForeignKey("transactions.id"), unique=True)
+    suggested_category_snapshot: Mapped[str] = mapped_column()
+    suggested_context_snapshot: Mapped[str] = mapped_column()
+    confirmed_category: Mapped[str | None] = mapped_column()
+    confirmed_business_context: Mapped[str | None] = mapped_column()
+    review_status: Mapped[str] = mapped_column(default="UNREVIEWED")
+    reviewer: Mapped[str | None] = mapped_column()
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_notes: Mapped[str | None] = mapped_column()
+    label_source: Mapped[str] = mapped_column(default="review_queue_csv_v1")
+    review_file_sha256: Mapped[str | None] = mapped_column(String(64))
+    taxonomy_version: Mapped[str] = mapped_column(default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

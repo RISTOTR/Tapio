@@ -102,3 +102,23 @@ See [bank ingestion](docs/bank_ingestion.md) and [verification](docs/bank_ingest
 Category/context rules are weak suggestions; recurrence and refund matches are
 candidates. No classifier, tax decisions or invoice reconciliation is implemented.
 Detailed generated outputs stay under ignored `data/processed/bank/`.
+
+## Human transaction labels
+
+Migration 0003 separates confirmed classification labels from weak suggestions.
+The private review queue is ready for manual review; no human labels are invented.
+See [label definitions and CSV instructions](docs/transaction_labeling.md) and
+[verification results](docs/transaction_labeling_review.md).
+
+**Current workflow:** the finalized v2 CSV can be imported with a local reviewer
+alias. Exact source bytes, including evidence/group fields, are archived privately;
+human category/context labels remain authoritative. See
+[the finalized import instructions](docs/transaction_labeling.md#finalized-human-import-2026-10-13).
+
+```sh
+uv run python -m data_pipeline.labels.import_transaction_reviews --file data/processed/bank/review_queue_v2_grouped.csv --reviewer risto
+uv run python -m data_pipeline.labels.export_ground_truth --account-key primary --report-only
+```
+
+Final reviews are protected from replacement. Ground-truth export accepts only
+human-reviewed rows. Transaction classifier training remains a later phase.

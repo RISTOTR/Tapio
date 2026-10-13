@@ -35,3 +35,26 @@ class TaxReviewStatus(StrEnum):
     NEEDS_REVIEW = "needs_review"
     CONFIRMED_BUSINESS_EXPENSE = "confirmed_business_expense"
     CONFIRMED_NON_BUSINESS = "confirmed_non_business"
+
+
+class TransactionCategory(StrEnum):
+    ELECTRICITY = "ELECTRICITY"
+    GRID_DISTRIBUTION = "GRID_DISTRIBUTION"
+    FORESTRY_SERVICE = "FORESTRY_SERVICE"
+    TIMBER_INCOME = "TIMBER_INCOME"
+    TAX = "TAX"
+    GROCERIES = "GROCERIES"
+    FUEL = "FUEL"
+    TRAVEL = "TRAVEL"
+    INSURANCE = "INSURANCE"
+    MAINTENANCE = "MAINTENANCE"
+    TRANSFER = "TRANSFER"
+    SUBSCRIPTION = "SUBSCRIPTION"
+    OTHER = "OTHER"
+    UNKNOWN = "UNKNOWN"
+
+
+class LabelReviewStatus(StrEnum):
+    UNREVIEWED = "UNREVIEWED"
+    REVIEWED = "REVIEWED"
+    SKIPPED_AMBIGUOUS = "SKIPPED_AMBIGUOUS"
