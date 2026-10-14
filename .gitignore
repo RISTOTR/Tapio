@@ -33,3 +33,11 @@ __pycache__/
 # ML results may reveal household usage; keep every generated output private.
 /ml/evaluation/output/
 /matplotlib-cache/
+
+# Gmail local OAuth, cache, selected evidence and audit artifacts.
+/.private/
+client_secret*.json
+credentials.json
+token.json
+token-*.json
+/gmail-cache/

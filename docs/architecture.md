@@ -177,3 +177,8 @@ separate transaction reversal candidate table. Reconciliation uses explicit vend
 amount, reference and date evidence. Ambiguous duplicate/refund relations remain
 candidates; no source transaction or human classification label is changed. See
 [document ingestion](document_ingestion.md) and [reconciliation](document_reconciliation.md).
+
+
+## Phase 05 typed capabilities
+
+The provider-neutral tool registry and bounded agent now wrap the existing read-only services. Gmail is a separate local stdio MCP capability using exact `gmail.readonly` OAuth; internal tools remain in-process. No schema change was required. See [agent architecture](agent_architecture.md), [Gmail integration](gmail_integration.md) and [Phase 05 review](phase_05_review.md) for implemented boundaries and acceptance results.
