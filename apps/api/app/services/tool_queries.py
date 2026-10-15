@@ -1,11 +1,13 @@
 """Read-only projections and existing deterministic-service composition for typed tools."""
 
+import hashlib
+import json
 import re
 from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 
 from apps.api.app.core.database import SessionLocal
 from apps.api.app.domain.models import (
@@ -16,13 +18,16 @@ from apps.api.app.domain.models import (
     Transaction,
     TransactionInvoiceAllocation,
     TransactionLabelReview,
+    TransactionReversalCandidate,
 )
+from apps.api.app.services.financial_summary import summarize_rows
 from data_pipeline.energy_cost.engine import calculate
 from data_pipeline.energy_cost.scenarios import SupplierScenario, compare
 from data_pipeline.energy_cost.sources import load
 from data_pipeline.energy_cost.spot import read_spot
 from data_pipeline.energy_cost.types import Reading, boundaries, validate_readings
 from data_pipeline.reconcile.invoices import state
+from tapio.tools import finance_schemas as F
 from tapio.tools import schemas as S
 from tapio.tools.errors import ErrorCode, ToolFailure
 
@@ -46,6 +51,47 @@ class Queries:
         self.session_factory = session_factory
         self.spot_path = Path(spot_path)
 
+    def summarize_finances(self, args):
+        t, r = Transaction, TransactionLabelReview
+        query = self.dated(
+            select(t, r).outerjoin(r, r.transaction_id == t.id), t.booking_date, args
+        )
+        with self.session() as session:
+            rows = session.execute(query.order_by(t.booking_date, t.id).limit(1001)).all()
+            if len(rows) > 1000:
+                raise ToolFailure(ErrorCode.OUTPUT_LIMIT)
+            return summarize_rows(rows, args)
+
+    def saved_energy_comparison(self, args):
+        # Fixed local artifact only: never run or alter the electricity engine in Phase 06.
+        path = Path("data/processed/energy_cost/actual_export_net/summary.json")
+        verification = path.with_name("verification.json")
+        if not path.is_file() or not verification.is_file():
+            raise ToolFailure(ErrorCode.INCOMPLETE_COVERAGE)
+        payload = path.read_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        if digest != json.loads(verification.read_text())["outputs_sha256"]["summary.json"]:
+            raise ToolFailure(ErrorCode.INCOMPLETE_COVERAGE)
+        result = json.loads(payload)
+        provenance = result["input_provenance"]
+        return F.SavedEnergySummary(
+            evidence="DETERMINISTIC_ENERGY_RESULT",
+            label=result["label"],
+            months=result["months"],
+            monthly=[project(F.SavedEnergyMonth, r) for r in result["monthly"]],
+            aggregate=project(
+                F.SavedEnergyMonth, {"year_month": "accepted_period_total", **result["aggregate"]}
+            ),
+            source_sha256=digest,
+            source_import_sha256=provenance["saved_import_sha256"],
+            source_review_sha256=provenance["review_sha256"],
+            coverage=(
+                "Accepted April-August 2026 only. Not a complete 2026 result or realized "
+                "alternative supplier saving."
+            ),
+            limitations=result["limitations"],
+        )
+
     @contextmanager
     def session(self):
         with self.session_factory() as session:
@@ -67,11 +113,23 @@ class Queries:
         q = self.dated(q, t.booking_date, args)
         for value, column in [
             (args.category, r.confirmed_category),
-            (args.business_context, r.confirmed_business_context),
+            (
+                args.business_context.value.upper() if args.business_context else None,
+                r.confirmed_business_context,
+            ),
             (args.direction, t.direction),
         ]:
             if value is not None:
                 q = q.where(column == value)
+        needs_review = or_(
+            r.id.is_(None),
+            r.confirmed_category == "UNKNOWN",
+            r.confirmed_business_context == "UNKNOWN",
+        )
+        if args.review_state == "NEEDS_REVIEW":
+            q = q.where(needs_review)
+        elif args.review_state == "CONFIRMED":
+            q = q.where(~needs_review)
         if args.counterparty:
             q = q.where(t.normalized_counterparty.icontains(args.counterparty, autoescape=True))
         with self.session() as session:
@@ -209,21 +267,85 @@ class Queries:
     def reconciliation(s, invoice):
         if invoice.total_eur is None:
             raise ToolFailure(ErrorCode.INCOMPLETE_COVERAGE)
-        rows = s.scalars(
-            select(TransactionInvoiceAllocation).where(
-                TransactionInvoiceAllocation.invoice_id == invoice.id
+        rows = list(
+            s.scalars(
+                select(TransactionInvoiceAllocation).where(
+                    TransactionInvoiceAllocation.invoice_id == invoice.id
+                )
             )
         )
         result = state(
             invoice.total_eur, [dict(amount=a.allocated_amount_eur, status=a.status) for a in rows]
         )
+        ids = {a.transaction_id for a in rows if a.status == "CANDIDATE"}
+        candidates = (
+            list(s.scalars(select(Transaction).where(Transaction.id.in_(ids)))) if ids else []
+        )
+        if any(t.currency != "EUR" for t in candidates):
+            raise ToolFailure(ErrorCode.INCOMPLETE_COVERAGE)
+        debit = sum((-t.amount for t in candidates if t.amount < 0), Decimal(0))
+        credit = sum((t.amount for t in candidates if t.amount > 0), Decimal(0))
+        pairs = (
+            list(
+                s.scalars(
+                    select(TransactionReversalCandidate).where(
+                        TransactionReversalCandidate.debit_id.in_(ids),
+                        TransactionReversalCandidate.credit_id.in_(ids),
+                    )
+                )
+            )
+            if ids
+            else []
+        )
         return S.ReconciliationSummary(
-            invoice_id=invoice.id, **result, human_review_required=result["state"] == "AMBIGUOUS"
+            invoice_id=invoice.id,
+            **result,
+            human_review_required=result["state"] != "PAID",
+            candidate_debit_count=sum(t.amount < 0 for t in candidates),
+            candidate_credit_count=sum(t.amount > 0 for t in candidates),
+            candidate_debit_total_eur=debit,
+            candidate_credit_total_eur=credit,
+            candidate_net_outflow_eur=debit - credit,
+            candidate_net_matches_invoice=bool(candidates) and debit - credit == invoice.total_eur,
+            candidate_transaction_ids=sorted(ids, key=str),
+            reversal_candidates=[
+                S.ReversalPair(debit_id=p.debit_id, credit_id=p.credit_id)
+                for p in sorted(pairs, key=lambda p: (str(p.debit_id), str(p.credit_id)))
+            ],
+            evidence=["AMBIGUOUS"]
+            if result["state"] == "AMBIGUOUS"
+            else ["RECONCILED_PAYMENT"]
+            if result["state"] == "PAID"
+            else ["UNSUPPORTED"],
         )
 
     def invoice_summary(self, s, row):
         doc = s.get(Document, row.document_id)
+        linked = s.execute(
+            select(
+                TransactionInvoiceAllocation.status,
+                TransactionLabelReview.confirmed_business_context,
+            )
+            .join(
+                TransactionLabelReview,
+                TransactionLabelReview.transaction_id
+                == TransactionInvoiceAllocation.transaction_id,
+            )
+            .where(
+                TransactionInvoiceAllocation.invoice_id == row.id,
+                TransactionLabelReview.review_status == "REVIEWED",
+            )
+        ).all()
         return S.InvoiceSummary(
+            source_business_context=row.business_context.value.upper()
+            if row.business_context
+            else None,
+            confirmed_payment_human_contexts=sorted(
+                {c for status, c in linked if status == "CONFIRMED" and c}
+            ),
+            candidate_payment_human_contexts=sorted(
+                {c for status, c in linked if status == "CANDIDATE" and c}
+            ),
             id=row.id,
             source_document_id=row.document_id,
             parser_version=doc.document_metadata.get("parser_version"),

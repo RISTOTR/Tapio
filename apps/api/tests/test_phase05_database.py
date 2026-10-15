@@ -269,3 +269,23 @@ def test_unsupported_handoff_preserves_cache_and_no_document(factory, tmp_path):
     assert c.get_message("msg1") == m
     with factory() as s:
         assert not list(s.scalars(select(Document).where(Document.sha256 == d.sha256)))
+
+
+def test_phase06_review_and_context_filters(seeded):
+    reviewed = seeded.transactions(S.TransactionQuery(business_context="property"))
+    unresolved = seeded.transactions(S.TransactionQuery(review_state="NEEDS_REVIEW"))
+    confirmed = seeded.transactions(S.TransactionQuery(review_state="CONFIRMED"))
+    assert len(reviewed.items) == len(unresolved.items) == len(confirmed.items) == 1
+    assert reviewed.items[0].id == confirmed.items[0].id
+    assert unresolved.items[0].id != confirmed.items[0].id
+
+
+def test_phase06_real_query_aggregates_only_human_authority(seeded):
+    from tapio.tools.finance_schemas import FinanceQuery
+
+    result = seeded.summarize_finances(FinanceQuery(date_from="2026-01-01", date_to="2026-12-31"))
+    groups = {g.business_context: g for g in result.context_totals}
+    assert set(groups) == {"PROPERTY", "UNKNOWN"}
+    assert groups["PROPERTY"].debit_total == Decimal("10")
+    assert groups["UNKNOWN"].debit_total == Decimal("10")
+    assert "SYNTHETIC-ARCHIVE" not in result.model_dump_json()

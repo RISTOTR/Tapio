@@ -194,7 +194,7 @@ def test_ids_cannot_select_files(identifier):
 
 def test_internal_registry_contracts(tmp_path):
     r = internal_registry(audit_path=tmp_path / "audit")
-    assert len(r.tools) == 11
+    assert len(r.tools) == 13
     assert all(t.classification == "READ_ONLY" for t in r.tools.values())
     for spec in r.specifications():
         assert (

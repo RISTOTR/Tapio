@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from .model import ModelTurn
 from .policy import SYSTEM_POLICY
+from .render import render_answer
 
 TEMPLATES = {
     "results": "The following results come directly from the selected deterministic tools.",
@@ -62,6 +63,7 @@ async def run_agent(request, model, registry, max_rounds=6):
         return {
             "status": "COMPLETE",
             "message": TEMPLATES[turn.message_key],
+            "answer": render_answer(selected, TEMPLATES[turn.message_key]),
             "results": selected,
             "errors": errors,
         }

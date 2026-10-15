@@ -45,6 +45,7 @@ class Period(Schema):
 
 
 class TransactionQuery(DateFilter):
+    review_state: Literal["NEEDS_REVIEW", "CONFIRMED"] | None = None
     category: TransactionCategory | None = None
     business_context: BusinessContext | None = None
     counterparty: str | None = Field(default=None, min_length=2, max_length=100)
@@ -174,6 +175,11 @@ class InvoiceQuery(DateFilter):
     ) = None
 
 
+class ReversalPair(Schema):
+    debit_id: UUID
+    credit_id: UUID
+
+
 class ReconciliationSummary(Schema):
     invoice_id: UUID
     state: str
@@ -181,6 +187,18 @@ class ReconciliationSummary(Schema):
     confirmed_refund_eur: Decimal
     confirmed_net_eur: Decimal
     human_review_required: bool
+    candidate_debit_count: int = 0
+    candidate_credit_count: int = 0
+    candidate_debit_total_eur: Decimal = Decimal(0)
+    candidate_credit_total_eur: Decimal = Decimal(0)
+    candidate_net_outflow_eur: Decimal = Decimal(0)
+    candidate_net_matches_invoice: bool = False
+    candidate_transaction_ids: list[UUID] = Field(default_factory=list)
+    reversal_candidates: list[ReversalPair] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    limitation: str = (
+        "Candidate net is not confirmed settlement; exact reversed debit is not established."
+    )
 
 
 class InvoiceSummary(Schema):
@@ -194,6 +212,12 @@ class InvoiceSummary(Schema):
     subtotal_eur: Decimal | None
     vat_eur: Decimal | None
     reconciliation: ReconciliationSummary
+    view: Literal["SOURCE_DOCUMENT_INVOICE"] = "SOURCE_DOCUMENT_INVOICE"
+    evidence: Literal["SOURCE_DOCUMENT"] = "SOURCE_DOCUMENT"
+    source_business_context: str | None = None
+    confirmed_payment_human_contexts: list[str] = Field(default_factory=list)
+    candidate_payment_human_contexts: list[str] = Field(default_factory=list)
+    tax_treatment: Literal["NOT_DETERMINED"] = "NOT_DETERMINED"
 
 
 class ForestryQuery(DateFilter):
@@ -205,6 +229,9 @@ class ForestryID(Schema):
 
 
 class ForestrySummary(Schema):
+    view: Literal["FORESTRY_SALE_VALUE_NOT_BANK_INCOME"] = "FORESTRY_SALE_VALUE_NOT_BANK_INCOME"
+    evidence: Literal["SOURCE_DOCUMENT"] = "SOURCE_DOCUMENT"
+
     id: UUID
     source_document_id: UUID
     parser_version: str | None

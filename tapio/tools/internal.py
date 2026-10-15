@@ -2,6 +2,7 @@
 
 from apps.api.app.services.tool_queries import Queries
 
+from . import finance_schemas as F
 from . import schemas as S
 from .registry import Registry, Tool
 
@@ -10,6 +11,28 @@ def internal_registry(queries=None, **kwargs):
     q = queries or Queries()
     registry = Registry(**kwargs)
     definitions = [
+        (
+            "summarize_finances",
+            F.FinanceQuery,
+            F.FinanceSummary,
+            q.summarize_finances,
+            (
+                "Deterministic bank cash totals by human context/category/currency. "
+                "Unknowns separate; never sum transaction pages or mix invoices/sales "
+                "with cash. Maximum 1000 rows, fails rather than truncating totals."
+            ),
+        ),
+        (
+            "get_saved_energy_comparison",
+            F.SavedEnergyQuery,
+            F.SavedEnergySummary,
+            q.saved_energy_comparison,
+            (
+                "Read frozen accepted April-August 2026 fixed-versus-spot household net "
+                "result. No electricity recalculation. Use for spot savings questions; "
+                "disclose limited retrospective coverage."
+            ),
+        ),
         (
             "query_transactions",
             S.TransactionQuery,

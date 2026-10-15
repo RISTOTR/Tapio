@@ -1,4 +1,4 @@
-# Phase 05 agent architecture
+# Agent architecture — Phases 05–06
 
 The LLM interprets; code calculates. Phase 05 adds typed, bounded capabilities to existing deterministic services. It does not replace ingestion, classification, reconciliation or the Phase 04 cost engine.
 
@@ -10,12 +10,12 @@ The LLM interprets; code calculates. Phase 05 adds typed, bounded capabilities t
 
 ## Internal tool registry
 
-All eleven internal tools are read-only:
+All thirteen internal tools are read-only:
 
 | Area | Tools |
 | --- | --- |
-| Transactions | `query_transactions` |
-| Energy | `query_energy`, `calculate_energy_cost`, `simulate_energy_scenario` |
+| Transactions | `query_transactions`, `summarize_finances` |
+| Energy | `query_energy`, `calculate_energy_cost`, `simulate_energy_scenario`, `get_saved_energy_comparison` |
 | Documents | `list_documents`, `get_document_summary` |
 | Invoices | `find_invoices`, `get_invoice` |
 | Forestry | `query_forestry_sales`, `get_forestry_sale` |
@@ -25,9 +25,9 @@ Lists cap at 50 rows; energy/cost periods cap at 731 days. Missing hourly covera
 
 ## Model and loop
 
-`AgentModel.generate_with_tools(messages, tools)` is a provider-neutral async protocol. `CallableModel` accepts an injected provider conversion function. No vendor SDK, live model credentials or live provider acceptance is included: synthetic model turns exercise the orchestration.
+`AgentModel.generate_with_tools(messages, tools)` is a provider-neutral async protocol. `CallableModel` accepts an injected provider conversion function. Phase 06 adds an optional OpenAI adapter using native function calls and a private local key. No SDK dependency is added. Live evaluation is explicitly invoked; its acceptance limits are recorded in `phase_06_agent_evaluation.md`.
 
-`run_agent` defaults to six rounds, allows at most eight, and gives each model response 45 seconds. A validated turn selects one tool call or references previous tool results. Final answers use trusted templates and exact referenced tool output, preventing model-generated arithmetic or invented project facts. This deliberately limits natural-language explanations. Invalid references, provider errors, missing evidence and exhausted rounds are explicit; prior tool errors cannot be hidden by result selection.
+`run_agent` defaults to six rounds, allows at most eight, and gives each model response 45 seconds. A validated turn selects one tool call or references previous tool results. Final answers use trusted templates, a deterministic prose renderer, and exact referenced tool output. The model selects evidence; it cannot write financial prose or calculate values. Evidence selection can still be incomplete. Invalid references, provider errors, missing evidence and exhausted rounds are explicit; prior tool errors cannot be hidden by result selection.
 
 The system policy requires sourced project facts, deterministic calculations, missing-coverage disclosure, no tax decisions, human review of ambiguity, and no source/email mutation.
 
@@ -62,3 +62,7 @@ The conversion function receives tool specifications and returns a `ModelTurn`-c
 Selected email bodies use private typed `EmailEvidence` manifests. Accepted PDF attachments reuse the existing atomic document loader and SHA-256 duplicate handling. There is no database migration or change to Document semantics. Import acceptance is a separate human-only command, absent from the agent registry and MCP server.
 
 No public endpoint, background crawl, scheduler, embeddings, frontend or tax automation is included.
+
+## Phase 06 evaluation boundary
+
+The evaluation registry removes the three electricity calculation/query tools and does not register Gmail. It exposes ten read-only tools. The saved-energy reader verifies the existing artifact hash and does not rerun calculations. The financial aggregate groups Decimal cash amounts by currency and completed human labels, caps its source scan at 1,000 transactions, and fails rather than returning a partial total. Invoice values, candidate/confirmed payments and historical forestry sale values remain separate views. Optional live evaluation uses `PYTHONPATH=. .venv/bin/python scripts/evaluate_agent.py --live`; omit `--live` for scripted cases. Private traces contain financial results and remain ignored.
