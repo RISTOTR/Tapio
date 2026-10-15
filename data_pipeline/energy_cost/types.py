@@ -91,6 +91,16 @@ class Season(Frozen):
         return self
 
 
+class ReviewedSource(Frozen):
+    source_message_ids: tuple[str, ...]
+    pdf_download_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    review_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    mapping_version: str = "reviewed-supplier-1"
+    authority: Literal["HUMAN_CONFIRMED"] = "HUMAN_CONFIRMED"
+    structured_document_parser: Literal[False] = False
+    caveat: str
+
+
 class Tariff(Frozen):
     provider: str = Field(min_length=1)
     product: str = Field(min_length=1)
@@ -102,15 +112,21 @@ class Tariff(Frozen):
     unit_price: Exact
     price_basis: Literal["NET", "GROSS"]
     vat_rate: Annotated[Exact, Field(ge=0, le=100)]
-    source_document_id: str = Field(min_length=1)
+    source_document_id: str | None = Field(default=None, min_length=1)
     source_version: str = Field(min_length=1)
-    source_kind: Literal["CONTRACT", "INVOICE_PERIOD", "BILLED_EXPORT_AVERAGE"]
+    source_kind: Literal["CONTRACT", "INVOICE_PERIOD", "BILLED_EXPORT_AVERAGE", "REVIEWED_CONTRACT"]
+    reviewed_source: ReviewedSource | None = None
     season: Season | None = None
     export_spot_rate: Exact | None = None
     export_margin: Exact | None = None
 
     @model_validator(mode="after")
     def valid(self):
+        if self.source_kind == "REVIEWED_CONTRACT":
+            if self.source_document_id is not None or self.reviewed_source is None:
+                raise ValueError("reviewed_source_requires_truthful_non_document_provenance")
+        elif self.source_document_id is None or self.reviewed_source is not None:
+            raise ValueError("document_source_required")
         if self.effective_to is not None and self.effective_to <= self.effective_from:
             raise ValueError("empty_tariff_period")
         if self.component == Component.GRID_TRANSFER and self.season is None:

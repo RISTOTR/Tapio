@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from apps.api.app.domain.models import Document, EnergyReading, MeteringPoint
 
+from .reviewed import load_reviewed
 from .types import Component, CostError, D, Reading, Season, Tariff, Window, boundaries
 
 
@@ -210,4 +211,6 @@ def load(session, start, end, meter_id=None):
     documents = [
         (d.id, d.document_metadata) for d in session.scalars(select(Document).order_by(Document.id))
     ]
-    return readings, project_tariffs(documents, meter.external_code), documents
+    projected = project_tariffs(documents, meter.external_code)
+    tariffs = Tariffs([*projected.values, *load_reviewed(meter.external_code)])
+    return readings, tariffs, documents

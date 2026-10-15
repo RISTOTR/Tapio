@@ -40,10 +40,12 @@ def provenance(tariff):
     return tariff.model_dump(mode="json")
 
 
-def calculate(readings, tariffs, start, end, scope="all", supplier=None):
+def calculate(readings, tariffs, start, end, scope="all", supplier=None, export_policy="include"):
     """supplier is an optional pure scenario pricing adapter, after 04A validation."""
     if scope not in ("all", "grid", "supplier"):
         raise CostError("INVALID_COST_SCOPE")
+    if export_policy not in ("include", "exclude"):
+        raise CostError("INVALID_EXPORT_POLICY")
     readings = validate_readings(readings, start, end)
     grid = scope in ("all", "grid")
     energy = scope in ("all", "supplier")
@@ -89,6 +91,8 @@ def calculate(readings, tariffs, start, end, scope="all", supplier=None):
                     row["supplier_energy_cost"] = r.consumption_kwh * tariff.gross_rate
                     used[tariff.model_dump_json()] = provenance(tariff)
                     try:
+                        if export_policy == "exclude":
+                            raise CostError("EXPORT_EXCLUDED")
                         export = tariffs.get(Component.SOLAR_EXPORT_CREDIT, day)
                         row["solar_export_credit"] = r.solar_export_kwh * export.gross_rate
                         export_factor = (
@@ -104,10 +108,17 @@ def calculate(readings, tariffs, start, end, scope="all", supplier=None):
                         if r.solar_export_kwh:
                             warnings.add("BILLED_EXPORT_AVERAGE_NOT_HOURLY_SPOT")
                     except CostError:
-                        if r.solar_export_kwh:
+                        if export_policy == "exclude":
+                            pass
+                        elif r.solar_export_kwh:
                             raise
-                        row["solar_export_credit"] = ZERO
-                        row["spot_export_value"] = row["export_margin"] = ZERO
+                        else:
+                            row["solar_export_credit"] = ZERO
+                            row["spot_export_value"] = row["export_margin"] = ZERO
+                if export_policy == "exclude":
+                    row["solar_export_credit"] = None
+                    row["spot_export_value"] = row["export_margin"] = None
+                    warnings.add("EXPORT_COMPENSATION_EXCLUDED_NOT_ASSUMED_ZERO")
             hourly.append(row)
         by_month = defaultdict(list)
         for row in hourly:
@@ -189,7 +200,8 @@ def calculate(readings, tariffs, start, end, scope="all", supplier=None):
             required = (
                 ["grid_transfer_cost", "electricity_tax_cost", "grid_fixed_cost"] if grid else []
             ) + (
-                ["supplier_energy_cost", "supplier_fixed_cost", "solar_export_credit"]
+                ["supplier_energy_cost", "supplier_fixed_cost"]
+                + (["solar_export_credit"] if export_policy == "include" else [])
                 if energy
                 else []
             )
@@ -202,7 +214,9 @@ def calculate(readings, tariffs, start, end, scope="all", supplier=None):
             result["scope_total"] = (
                 sum(known, ZERO) if all(result[f] is not None for f in required) else None
             )
-            result["net_total_cost"] = result["scope_total"] if scope == "all" else None
+            result["net_total_cost"] = (
+                result["scope_total"] if scope == "all" and export_policy == "include" else None
+            )
             result["effective_cost_per_consumed_kwh"] = ratio(
                 result["net_total_cost"], result["consumption_kwh"]
             )
@@ -214,7 +228,12 @@ def calculate(readings, tariffs, start, end, scope="all", supplier=None):
         return {
             "mode": mode,
             "scope": scope,
-            "total_definition": "MODELED_COMPONENTS_EXCLUDING_UNSUPPORTED_OTHER_CHARGES",
+            "total_definition": (
+                "IMPORT_SIDE_EXCLUDING_EXPORT_COMPENSATION_AND_UNSUPPORTED_OTHER_CHARGES"
+                if export_policy == "exclude"
+                else "MODELED_COMPONENTS_EXCLUDING_UNSUPPORTED_OTHER_CHARGES"
+            ),
+            "export_policy": export_policy,
             "start": start,
             "end": end,
             "warnings": sorted(warnings),

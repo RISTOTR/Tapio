@@ -76,3 +76,8 @@ Initial database setup errors were resolved by restarting the existing local Col
 The provider-neutral loop is tested with a fake provider, not a live LLM. Search is intentionally bounded and incomplete. No link fetching, public endpoint, background scanning, OCR, frontend or autonomous imports were added. Testing-app OAuth tokens may require reauthorization. The SDK major is pinned to the implemented v1 API.
 
 Next: review `data/interim/gmail/candidate_report.md` and select individual bodies/PDFs for acceptance, starting with the contract confirmation if relevant. Phase 05 stops here as requested; do not import candidates, update tariffs or extend Phase 04 automatically.
+
+
+## Subsequent human acceptance — separate Phase 04 step
+
+On 15 October 2026, a separate explicitly authorized Phase 04 step projected the reviewed Vattenfall contract into supplier tariffs and reran the newly supported import-side comparisons. The Phase 05 acceptance results and original review gate above are unchanged. See [the subsequent Phase 04 review](energy_cost_engine_review.md#vattenfall-contract-evidence-accepted--2025-12-01-onward).

@@ -78,3 +78,12 @@ Credentials, tokens, caches, attachments, candidate reports and content-free aud
 To revoke access, remove this app's access in your Google Account third-party connections, then remove the local token when you no longer need it. Deleting a local token alone does not revoke Google's grant. Never broaden scopes to resolve an authorization failure.
 
 `AUTHENTICATION_REQUIRED`: check Desktop client type, enabled Gmail API, browser consent and token expiry. A testing/access-denied page may mean the selected account is not listed as a test user. `SCOPE_REJECTED`: stop, revoke the prior grant and authorize only readonly. `GMAIL_API_FAILURE`: check API enablement, connectivity and quota; no credentials appear in tool errors. `NO_MATCHING_MESSAGES` is a bounded-search result, not evidence that the entire mailbox lacks relevant records. `OUTPUT_LIMIT` or unsupported MIME requires a narrower/manual review, not an unrestricted export.
+
+
+## Selected contract evidence review
+
+`contract_review.py` compares operator-reviewed, typed observations; it is not a PDF parser or an agent tool. Confirmation/PDF facts may support accepted conclusions, while expiry notices support only a previous contract end date. Offers and current webpages cannot establish accepted historical terms. Conflicting eligible values remain conflicts; missing dates are never inferred. Field values are exact strings with source excerpts and locators.
+
+`accept_evidence` also supports literal selected excerpts, accepted field annotations and source classification. This retains full-source content hashes and Gmail provenance while keeping unrelated body text and links out of the accepted manifest. Selection contributes to the manifest identity, so retries are idempotent and differently reviewed excerpts remain separate. These annotations are supplied by a human-directed review, not automatically trusted model output.
+
+For unsupported PDFs, use the existing extraction/parser-detection stages and preserve the download hash plus unsupported status. Do not fabricate a Document ID or parser version and do not force a failed database import. Evidence sufficiency does not itself authorize tariff changes.

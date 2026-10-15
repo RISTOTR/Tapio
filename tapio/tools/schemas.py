@@ -14,6 +14,7 @@ from apps.api.app.domain.enums import (
     TransactionDirection,
 )
 from data_pipeline.energy_cost.scenarios import ElectricityScenario
+from data_pipeline.energy_cost.types import ReviewedSource
 
 
 class Schema(BaseModel):
@@ -109,13 +110,15 @@ class MonthlyCost(Schema):
 
 
 class PriceProvenance(Schema):
-    source_document_id: str
+    source_document_id: str | None
     provider: str
     product: str
     source_version: str
     effective_from: date
     effective_to: date | None
     component: str
+    source_kind: str | None = None
+    reviewed_source: ReviewedSource | None = None
 
 
 class CostSummary(Schema):
