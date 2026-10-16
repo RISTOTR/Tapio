@@ -7,8 +7,9 @@ from collections import Counter
 from data_pipeline.labels.contracts import QUEUE_COLUMNS, ReviewError, encode_queue, parse_reviews
 
 
-def parse_import(raw):
+def parse_import(raw, *, phase07_manifest=None):
     # Imported lazily because the queue utility also uses workflow read helpers.
+    from data_pipeline.labels.phase07_input import COLUMNS, adapt, validate_manifest
     from data_pipeline.labels.upgrade_review_queue import V2_COLUMNS, parse_v2
 
     try:
@@ -17,6 +18,7 @@ def parse_import(raw):
         for delimiter in (",", ";"):
             reader = csv.DictReader(io.StringIO(text, newline=""), delimiter=delimiter, strict=True)
             if reader.fieldnames in (
+                COLUMNS,
                 QUEUE_COLUMNS,
                 V2_COLUMNS,
                 [k for k in V2_COLUMNS if k != "review_group"],
@@ -27,6 +29,10 @@ def parse_import(raw):
         columns, rows = candidates[0]
         if any(None in r or any(v is None for v in r.values()) for r in rows):
             raise ReviewError("malformed_row")
+        if columns == COLUMNS:
+            converted = adapt(rows)
+            validate_manifest(rows, phase07_manifest)
+            return converted, "human_phase07_csv_v1"
         stream = io.StringIO(newline="")
         writer = csv.DictWriter(stream, columns, lineterminator="\n")
         writer.writeheader()

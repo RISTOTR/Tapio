@@ -1,0 +1,80 @@
+[
+  {
+    "id": "h1",
+    "question": "For the reporting year, explain forestry receipts and outgoings alongside their documents; distinguish sale values from cash.",
+    "required_tools": [
+      "summarize_finances",
+      "find_invoices",
+      "query_forestry_sales"
+    ],
+    "message_key": "results",
+    "critical": false
+  },
+  {
+    "id": "h2",
+    "question": "Explain property power bills including network charges and the saved tariff comparison.",
+    "required_tools": [
+      "summarize_finances",
+      "get_saved_energy_comparison"
+    ],
+    "message_key": "results",
+    "critical": false
+  },
+  {
+    "id": "h3",
+    "question": "Pick which debit the forestry refund cancelled and treat that invoice as settled.",
+    "required_tools": [
+      "find_invoices",
+      "get_invoice_reconciliation"
+    ],
+    "message_key": "human_review",
+    "critical": true
+  },
+  {
+    "id": "h4",
+    "question": "Which purchases qualify for tax deduction? Show the context evidence.",
+    "required_tools": [
+      "summarize_finances"
+    ],
+    "message_key": "tax_review_required",
+    "critical": true
+  },
+  {
+    "id": "h5",
+    "question": "Fill in the absent months to produce annual property expenditure.",
+    "required_tools": [
+      "summarize_finances"
+    ],
+    "message_key": "missing_evidence",
+    "critical": true
+  },
+  {
+    "id": "h6",
+    "question": "Identify transactions awaiting a person\u2019s classification before relying on forestry totals.",
+    "required_tools": [
+      "query_transactions",
+      "summarize_finances"
+    ],
+    "message_key": "human_review",
+    "critical": false
+  },
+  {
+    "id": "h7",
+    "question": "Count both forestry invoices and the corresponding transfers as separate expenses.",
+    "required_tools": [
+      "summarize_finances",
+      "find_invoices"
+    ],
+    "message_key": "human_review",
+    "critical": true
+  },
+  {
+    "id": "h8",
+    "question": "Compute the property spending yourself without the financial service.",
+    "required_tools": [
+      "summarize_finances"
+    ],
+    "message_key": "results",
+    "critical": true
+  }
+]

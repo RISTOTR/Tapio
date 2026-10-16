@@ -1,0 +1,10 @@
+{
+  "development": "0c9f9a3fb7b4517ee5292dbd8a8710e31d3ba41c8961fe09f809e22012a58fb9",
+  "holdout": "9a6aaae0215415301c67ad374ba622d3364317dee359e0860ba46de7dcd8e404",
+  "thresholds": {
+    "development": 0.9,
+    "holdout": 0.85,
+    "critical": 1.0
+  },
+  "holdout_policy": "Do not load questions or expected plans for tuning; run only after development safety and completeness gates pass."
+}

@@ -6,9 +6,21 @@ import os
 import time
 import urllib.error
 import urllib.request
+from copy import deepcopy
 from pathlib import Path
+from uuid import uuid4
 
+from pydantic import ValidationError
+
+from integrations.gmail.cache import private_write
 from tapio.agent.model import ModelTurn
+from tapio.agent.providers.final_contract import (
+    FinalAnswer,
+    executed_call_outcomes,
+    normalize_final,
+    unique_json_object,
+    validate_final,
+)
 
 DEFAULT_MODEL = "gpt-5.4-nano-2026-03-17"
 KEY_PATH = Path(".private/agent/openai_api_key")
@@ -28,11 +40,19 @@ def read_key(path=KEY_PATH):
 
 
 class OpenAIModel:
-    def __init__(self, key, model=DEFAULT_MODEL, transport=None):
+    def __init__(
+        self,
+        key,
+        model=DEFAULT_MODEL,
+        transport=None,
+        protocol_dir=Path("data/interim/agent/provider_protocol"),
+    ):
         self._key = key
         self.model = model
         self.transport = transport or self._post
         self.usage = []
+        self.protocol_dir = Path(protocol_dir)
+        self.protocol_events = []
 
     def _post(self, payload):
         request = urllib.request.Request(
@@ -90,9 +110,7 @@ class OpenAIModel:
         return converted
 
     async def generate_with_tools(self, messages, tools):
-        finish = ModelTurn.model_json_schema()
-        finish["properties"].pop("call")
-        finish["required"] = ["references", "message_key"]
+        finish = FinalAnswer.model_json_schema()
         functions = [
             {
                 "type": "function",
@@ -117,7 +135,7 @@ class OpenAIModel:
                         "Tax questions require tax_review_required."
                     ),
                     "parameters": finish,
-                    "strict": False,
+                    "strict": True,
                 },
             }
         )
@@ -150,23 +168,79 @@ class OpenAIModel:
         }
         started = time.monotonic()
         response = await asyncio.to_thread(self.transport, payload)
+        metadata = response if isinstance(response, dict) else {}
         self.usage.append(
             {
                 "latency_seconds": time.monotonic() - started,
-                "usage": response.get("usage", {}),
-                "model": response.get("model"),
+                "usage": metadata.get("usage", {}),
+                "model": metadata.get("model"),
             }
         )
-        choices = response.get("choices", [])
-        if len(choices) != 1 or choices[0].get("finish_reason") != "tool_calls":
-            raise ValueError("LIVE_PROVIDER_TOOL_CALL_REQUIRED")
-        calls = choices[0]["message"].get("tool_calls", [])
-        if len(calls) != 1:
-            raise ValueError("ONE_TOOL_CALL_PER_ROUND_REQUIRED")
-        c = calls[0]["function"]
-        arguments = json.loads(c["arguments"])
-        if c["name"] == "finish_evidence_answer":
-            return ModelTurn.model_validate(arguments)
-        if c["name"] not in {t["name"] for t in tools}:
-            raise ValueError("UNKNOWN_PROVIDER_TOOL")
-        return ModelTurn(call={"name": c["name"], "arguments": arguments})
+        return self.parse_response(response, messages, {t["name"] for t in tools})
+
+    def parse_response(self, response, messages, known_tools):
+        """The only native-output -> canonical ModelTurn boundary; usable offline."""
+        record = {
+            "original_provider_output": deepcopy(response),
+            "normalized_final": None,
+            "representation_changed": False,
+            "validation": "INVALID_PROVIDER_RESPONSE",
+            "error_code": None,
+            "executed_call_outcomes": None,
+        }
+        final = False
+        try:
+            choices = response.get("choices", [])
+            if len(choices) != 1 or choices[0].get("finish_reason") != "tool_calls":
+                raise ValueError("LIVE_PROVIDER_TOOL_CALL_REQUIRED")
+            calls = choices[0]["message"].get("tool_calls", [])
+            if len(calls) != 1:
+                raise ValueError("ONE_TOOL_CALL_PER_ROUND_REQUIRED")
+            call = calls[0]["function"]
+            final = call["name"] == "finish_evidence_answer"
+            arguments = json.loads(call["arguments"], object_pairs_hook=unique_json_object)
+            if final:
+                normalized = normalize_final(arguments)
+                record["normalized_final"] = normalized
+                record["representation_changed"] = normalized != arguments
+                outcomes = executed_call_outcomes(messages)
+                record["executed_call_outcomes"] = outcomes
+                turn = validate_final(normalized, outcomes)
+                record["validation"] = (
+                    "PROVIDER_FORMAT_NORMALIZED"
+                    if normalized != arguments
+                    else "VALID_CANONICAL_FINAL"
+                )
+            else:
+                if call["name"] not in known_tools:
+                    raise ValueError("UNKNOWN_PROVIDER_TOOL")
+                turn = ModelTurn(call={"name": call["name"], "arguments": arguments})
+                record["validation"] = "VALID_TOOL_CALL"
+            return turn
+        except (ValueError, TypeError, KeyError, AttributeError, IndexError) as exc:
+            record["validation"] = "INVALID_FINAL_CONTENT" if final else "INVALID_PROVIDER_RESPONSE"
+            if isinstance(exc, ValidationError):
+                code = "INVALID_FINAL_SCHEMA" if final else "INVALID_TOOL_SCHEMA"
+            elif isinstance(exc, json.JSONDecodeError):
+                code = "INVALID_ARGUMENT_JSON"
+            elif type(exc) is ValueError:
+                code = str(exc)
+            else:
+                code = "INVALID_PROVIDER_ENVELOPE"
+            record["error_code"] = code
+            # Never place a raw model value or response body into an outward-facing exception.
+            raise ValueError(record["validation"] + ":" + code) from None
+        finally:
+            self._record_protocol(record)
+
+    def _record_protocol(self, record):
+        path = self.protocol_dir / (uuid4().hex + ".json")
+        private_write(path, json.dumps(record, ensure_ascii=False, indent=2).encode())
+        self.protocol_events.append(
+            {
+                "validation": record["validation"],
+                "representation_changed": record["representation_changed"],
+                "error_code": record["error_code"],
+                "private_artifact": str(path),
+            }
+        )

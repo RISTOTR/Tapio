@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 
 import polars as pl
 
+from data_pipeline.labels.merchant_policy import AMBIGUOUS_REASON, ambiguous_merchant
 from data_pipeline.normalize.bank_analysis import (
     duplicate_payment_candidates,
     effective_counterparty,
@@ -70,6 +71,12 @@ def sample_transactions(
             [merchant or "", row.get("message") or "", row.get("source_description") or ""]
         )
         tags = {name for name, pattern in PATTERNS.items() if re.search(pattern, text, re.I)}
+        if ambiguous_merchant(merchant):
+            tags.add(AMBIGUOUS_REASON)
+            hints[row["transaction_id"]].append(
+                "AMBIGUOUS_MULTI_CONTEXT_MERCHANT: human purpose review required; "
+                "inspect linked receipts if available; no tax inference"
+            )
         if row["business_context"] == "forestry":
             tags.add("forestry_rule")
         if row["business_context"] == "property":

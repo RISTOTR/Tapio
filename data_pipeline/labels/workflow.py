@@ -104,10 +104,12 @@ def prepare_queue(factory, account_key: str, *, target=100, seed=42):
     return encode_queue(queue), report
 
 
-def import_reviews(raw: bytes, *, reviewer: str, factory) -> dict:
+def import_reviews(
+    raw: bytes, *, reviewer: str, factory, phase07_manifest=None, dry_run=False
+) -> dict:
     if not reviewer.strip() or reviewer != reviewer.strip() or len(reviewer) > 100:
         raise ReviewError("invalid_reviewer")
-    rows, label_source = parse_import(raw)
+    rows, label_source = parse_import(raw, phase07_manifest=phase07_manifest)
     digest = sha256(raw).hexdigest()
     result = {
         "reviewed_rows_inserted": 0,
@@ -129,8 +131,20 @@ def import_reviews(raw: bytes, *, reviewer: str, factory) -> dict:
                     TransactionLabelReview.transaction_id == identity
                 )
             )
-            if review is None:
-                raise ReviewError(f"transaction_not_in_registered_queue:line_{line}")
+            new_review = review is None
+            if new_review:
+                if label_source != "human_phase07_csv_v1":
+                    raise ReviewError(f"transaction_not_in_registered_queue:line_{line}")
+                review = TransactionLabelReview(
+                    transaction_id=identity,
+                    suggested_category_snapshot=(transaction.category or "unknown").upper(),
+                    suggested_context_snapshot=(
+                        transaction.business_context.value
+                        if transaction.business_context
+                        else "unknown"
+                    ).upper(),
+                    review_status="UNREVIEWED",
+                )
             expected = review_facts(transaction, secrets)
             if any(row[key] != expected[key] for key in FACT_FIELDS):
                 raise ReviewError(f"read_only_fields_changed:line_{line}")
@@ -158,6 +172,13 @@ def import_reviews(raw: bytes, *, reviewer: str, factory) -> dict:
             if status == "UNREVIEWED":
                 result["unreviewed"] += 1
                 continue
+            if dry_run:
+                result[
+                    "reviewed_rows_inserted" if status == "REVIEWED" else "ambiguous_skipped"
+                ] += 1
+                continue
+            if new_review:
+                session.add(review)
             review.confirmed_category = category
             review.confirmed_business_context = context
             review.review_status = status

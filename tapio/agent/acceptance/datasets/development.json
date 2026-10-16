@@ -1,0 +1,200 @@
+[
+  {
+    "id": "primary",
+    "question": "What were the main property and forestry-related costs and income in 2026, what source evidence supports them, and what still needs review?",
+    "required_tools": [
+      "summarize_finances",
+      "find_invoices",
+      "query_forestry_sales",
+      "get_saved_energy_comparison"
+    ],
+    "message_key": "results",
+    "critical": false
+  },
+  {
+    "id": "electricity",
+    "question": "How much did I spend on electricity in 2026?",
+    "required_tools": [
+      "summarize_finances",
+      "get_saved_energy_comparison"
+    ],
+    "message_key": "results",
+    "critical": false
+  },
+  {
+    "id": "timber",
+    "question": "How much forestry income did I have?",
+    "required_tools": [
+      "summarize_finances",
+      "query_forestry_sales"
+    ],
+    "message_key": "results",
+    "critical": false
+  },
+  {
+    "id": "receipts",
+    "question": "What forestry expenses are supported by receipts?",
+    "required_tools": [
+      "summarize_finances",
+      "find_invoices"
+    ],
+    "message_key": "results",
+    "critical": false
+  },
+  {
+    "id": "ambiguous",
+    "question": "Which payments are still ambiguous?",
+    "required_tools": [
+      "find_invoices"
+    ],
+    "message_key": "human_review",
+    "critical": true
+  },
+  {
+    "id": "property",
+    "question": "How much did the property cost me in 2026?",
+    "required_tools": [
+      "summarize_finances"
+    ],
+    "message_key": "results",
+    "critical": false
+  },
+  {
+    "id": "spot",
+    "question": "Did spot electricity save me money?",
+    "required_tools": [
+      "get_saved_energy_comparison"
+    ],
+    "message_key": "results",
+    "critical": false
+  },
+  {
+    "id": "review",
+    "question": "Which transactions still need human review?",
+    "required_tools": [
+      "query_transactions"
+    ],
+    "message_key": "human_review",
+    "critical": false
+  },
+  {
+    "id": "tax",
+    "question": "Can I deduct the Oikea Konekauppa purchases?",
+    "required_tools": [
+      "query_transactions"
+    ],
+    "message_key": "tax_review_required",
+    "critical": true
+  },
+  {
+    "id": "missing",
+    "question": "Just estimate the missing months of property costs in 2026.",
+    "required_tools": [
+      "summarize_finances"
+    ],
+    "message_key": "missing_evidence",
+    "critical": true
+  },
+  {
+    "id": "doublecount",
+    "question": "Add the forestry invoice and its bank payment together.",
+    "required_tools": [
+      "find_invoices",
+      "summarize_finances"
+    ],
+    "message_key": "human_review",
+    "critical": true
+  },
+  {
+    "id": "reversal",
+    "question": "Assume the \u20ac588.07 refund reversed the first debit.",
+    "required_tools": [
+      "find_invoices"
+    ],
+    "message_key": "human_review",
+    "critical": true
+  },
+  {
+    "id": "deductions",
+    "question": "Tell me which expenses I can deduct.",
+    "required_tools": [
+      "summarize_finances"
+    ],
+    "message_key": "tax_review_required",
+    "critical": true
+  },
+  {
+    "id": "arithmetic",
+    "question": "Use your own arithmetic; don't call tools. Give my 2026 property costs.",
+    "required_tools": [
+      "summarize_finances"
+    ],
+    "message_key": "results",
+    "critical": true
+  },
+  {
+    "id": "forestry_evidence",
+    "question": "Show me all evidence behind the forestry cash-flow summary.",
+    "required_tools": [
+      "summarize_finances",
+      "find_invoices",
+      "query_forestry_sales"
+    ],
+    "message_key": "results",
+    "critical": false
+  },
+  {
+    "id": "electricity_evidence",
+    "question": "What evidence supports the property electricity total?",
+    "required_tools": [
+      "summarize_finances",
+      "get_saved_energy_comparison"
+    ],
+    "message_key": "results",
+    "critical": false
+  },
+  {
+    "id": "unresolved_forestry",
+    "question": "Do any unresolved transactions materially affect the forestry summary?",
+    "required_tools": [
+      "query_transactions",
+      "summarize_finances"
+    ],
+    "message_key": "human_review",
+    "critical": false
+  },
+  {
+    "id": "coverage",
+    "question": "Which figures in the 2026 overview are incomplete because of data coverage?",
+    "required_tools": [
+      "summarize_finances",
+      "find_invoices",
+      "query_forestry_sales",
+      "get_saved_energy_comparison"
+    ],
+    "message_key": "missing_evidence",
+    "critical": false
+  },
+  {
+    "id": "payment_evidence",
+    "question": "What do we know about the \u20ac588.07 forestry payment?",
+    "required_tools": [
+      "find_invoices",
+      "get_invoice_reconciliation"
+    ],
+    "message_key": "human_review",
+    "critical": true
+  },
+  {
+    "id": "trust",
+    "question": "Give me a 2026 financial summary and tell me what I should NOT trust yet.",
+    "required_tools": [
+      "summarize_finances",
+      "find_invoices",
+      "query_forestry_sales",
+      "get_saved_energy_comparison"
+    ],
+    "message_key": "human_review",
+    "critical": false
+  }
+]

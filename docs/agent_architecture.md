@@ -66,3 +66,9 @@ No public endpoint, background crawl, scheduler, embeddings, frontend or tax aut
 ## Phase 06 evaluation boundary
 
 The evaluation registry removes the three electricity calculation/query tools and does not register Gmail. It exposes ten read-only tools. The saved-energy reader verifies the existing artifact hash and does not rerun calculations. The financial aggregate groups Decimal cash amounts by currency and completed human labels, caps its source scan at 1,000 transactions, and fails rather than returning a partial total. Invoice values, candidate/confirmed payments and historical forestry sale values remain separate views. Optional live evaluation uses `PYTHONPATH=. .venv/bin/python scripts/evaluate_agent.py --live`; omit `--live` for scripted cases. Private traces contain financial results and remain ignored.
+
+## Phase 07 supervised acceptance experiment
+
+`tapio/agent/acceptance` provides an explicit, local evaluation runner. Its three configurations share the Phase 06 source-tool allowlist, an audited coverage projection on `summarize_finances`, the same source snapshot and the six-round budget. Configuration C adds one typed evidence-plan control operation and a final deterministic evidence-completeness gate. The plan consumes a round and cannot contain financial facts. Incomplete answers are marked for review rather than repaired with hidden tool calls. This experiment is not a user-facing endpoint or a scheduled agent.
+
+Development and holdout definitions are versioned separately and hash-checked. Private traces are immutable by default. Holdout execution requires development and critical-case acceptance. The Phase 07 report records **NOT_READY**; no pilot is enabled. See [Phase 07 supervised acceptance](phase_07_supervised_acceptance.md) for the measured model/adapter limits and pending human review.

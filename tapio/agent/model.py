@@ -13,16 +13,19 @@ class ToolCall(Schema):
 
 
 class ResultReference(Schema):
-    call_index: int = Field(ge=0)
+    call_index: int = Field(ge=0, strict=True)
     # References select an entire typed result. They cannot insert or recompute values.
+
+
+MessageKey = Literal[
+    "results", "missing_evidence", "unsupported", "human_review", "tax_review_required"
+]
 
 
 class ModelTurn(Schema):
     call: ToolCall | None = None
     references: list[ResultReference] = Field(default_factory=list, max_length=8)
-    message_key: Literal[
-        "results", "missing_evidence", "unsupported", "human_review", "tax_review_required"
-    ] = "results"
+    message_key: MessageKey = "results"
 
 
 class AgentModel(Protocol):

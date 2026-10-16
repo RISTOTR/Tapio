@@ -20,10 +20,19 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--reviewer", required=True, help="Human reviewer name or stable local alias"
     )
+    parser.add_argument("--phase07-original", type=Path, help="Frozen original Phase 07 JSON queue")
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     try:
         raw = args.file.read_bytes()
-        rows, _ = parse_import(raw)
+        manifest = json.loads(args.phase07_original.read_text()) if args.phase07_original else None
+        rows, _ = parse_import(raw, phase07_manifest=manifest)
+        options = dict(reviewer=args.reviewer, factory=SessionLocal, phase07_manifest=manifest)
+        result = import_reviews(raw, **options, dry_run=True)
+        result.update(queue_report(rows))
+        if args.dry_run:
+            print(json.dumps({**result, "dry_run": True}))
+            return 0
         archive_dir = PRIVATE_ROOT / "review_imports"
         archive_dir.mkdir(parents=True, exist_ok=True)
         archive = archive_dir / f"{sha256(raw).hexdigest()}.csv"
@@ -32,8 +41,9 @@ def main(argv=None) -> int:
                 raise ReviewError("archive_hash_conflict")
         else:
             with archive.open("xb") as file:
+                archive.chmod(0o600)
                 file.write(raw)
-        result = import_reviews(raw, reviewer=args.reviewer, factory=SessionLocal)
+        result = import_reviews(raw, **options)
         result.update(queue_report(rows))
         result["source_archive"] = str(archive)
         result["review_file_sha256"] = sha256(raw).hexdigest()
