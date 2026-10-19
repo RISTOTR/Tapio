@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Tapio local pilot</title>
+<style>body{max-width:850px;margin:2em auto;padding:0 1em;font:16px system-ui}textarea{width:100%;box-sizing:border-box}pre{white-space:pre-wrap;overflow-wrap:anywhere}section{margin:1.5em 0}button{padding:.5em 1em}</style>
+<h1>Tapio read-only pilot</h1>
+<p>Ask one question about your imported evidence. Tapio cannot change sources or decide tax deductibility. For date-specific questions, name one calendar month and year.</p>
+<form id="ask"><label for="question">Question</label><textarea id="question" rows="3" maxlength="7600" required></textarea><button id="send">Ask</button></form>
+<p id="status" role="status"></p>
+<div id="result" hidden>
+<section><h2>Answer</h2><pre id="answer"></pre></section>
+<section><h2>Evidence used</h2><ul id="evidence"></ul></section>
+<section><h2>Coverage</h2><pre id="coverage"></pre></section>
+<section><h2>Human review</h2><ul id="review"></ul></section>
+<section><h2>Limitations</h2><ul id="limits"></ul></section>
+<p id="usage"></p>
+<form id="feedback"><label>Feedback <select id="rating"><option>GOOD</option><option>INCOMPLETE</option><option>WRONG_EVIDENCE</option><option>UNCLEAR</option><option>OTHER</option></select></label><p><label>Optional note<textarea id="note" maxlength="1000" rows="2"></textarea></label></p><button>Save feedback</button></form>
+<p id="feedback-status" role="status"></p></div>
+<script>
+let session;
+const el=id=>document.getElementById(id);
+const list=(id,values)=>{el(id).replaceChildren();for(const text of values){const li=document.createElement('li');li.textContent=text;el(id).append(li)}};
+el('ask').onsubmit=async event=>{event.preventDefault();el('send').disabled=true;el('status').textContent='Retrieving and validating evidence…';el('result').hidden=true;try{const response=await fetch('/pilot/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:el('question').value})});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Question could not be processed.');session=data.session.id;el('status').textContent=data.evidence_states.join(' · ');el('answer').textContent=data.answer;list('evidence',data.evidence.map(x=>`${x.summary} (${x.records} record(s))`));el('coverage').textContent=JSON.stringify(data.coverage,null,2);list('review',data.human_review.map(x=>x.summary+' '+x.action));list('limits',data.limitations);el('usage').textContent=`${data.session.latency_seconds.toFixed(2)} seconds · ${data.session.model_calls} model calls · estimated $${data.session.estimated_cost_usd}${data.session.usage_complete ? "" : " (usage incomplete; billing may differ)"}`;el('feedback-status').textContent='';el('result').hidden=false}catch(error){el('status').textContent=error.message}finally{el('send').disabled=false}};
+el('feedback').onsubmit=async event=>{event.preventDefault();try{const response=await fetch('/pilot/feedback/'+session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rating:el('rating').value,note:el('note').value})});el('feedback-status').textContent=response.ok?'Feedback saved privately. Source data is unchanged.':'Feedback could not be saved.'}catch{el('feedback-status').textContent='Feedback could not be saved.'}};
+</script></html>
