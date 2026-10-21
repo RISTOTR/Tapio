@@ -7,7 +7,7 @@ in the completed CSV are authoritative; no labels were reinterpreted or correcte
 
 - Source: `data/processed/bank/review_queue_v2_grouped.csv` (Numbers semicolon CSV).
 - Exact SHA-256: `8256aa17efd9ce99adff2a2a15d14edb93d8ca901b432640700733f37022fcdc`.
-- Reviewer: `risto`; taxonomy version 2; method `human_csv_v2`.
+- Reviewer: `<REVIEWER_ALIAS>`; taxonomy version 2; method `human_csv_v2`.
 - All 100 UUIDs, source facts, amount displays and frozen suggestions validated.
 - Import: 99 REVIEWED, 1 SKIPPED_AMBIGUOUS, 0 UNREVIEWED; 0 validation failures.
 - Repeat with identical file/reviewer: 100 unchanged, no new reviews or replacements.

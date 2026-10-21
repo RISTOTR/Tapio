@@ -58,9 +58,9 @@ the supplied grid-export semantics, but its header does not assert netting. No
 netting calculation is performed. Its values can differ from the annual source;
 see the review report. The files contain no meter code, so --metering-point is
 required. For these real 2025/2026 files the user supplied external metering-point
-code `643006966022870423`; consumption and netted solar export are loaded together
+code `<METERING_POINT_CONSUMPTION>`; consumption and netted solar export are loaded together
 as one hourly series. Vattenfall separately uses contractual usage-point ID
-`643006966035063447` for solar-export/Omatuotanto settlement. This is not a second
+`<METERING_POINT_PRODUCTION>` for solar-export/Omatuotanto settlement. This is not a second
 copy of the CSV or a second MeteringPoint. Model that contractual/export identifier
 later if a source requires it. The day file was confirmed to belong to the same
 meter and is rejected when its hours overlap the annual data.

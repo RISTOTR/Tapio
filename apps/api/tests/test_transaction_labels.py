@@ -119,7 +119,7 @@ def synthetic_sample():
         merchant = [
             "Vattenfall Oy",
             "Elenia Verkko Oyj",
-            "Stora Enso Oyj",
+            "Example Timber Buyer Oy",
             f"Synthetic shop {i}",
             f"Synthetic fuel {i}",
         ][kind]

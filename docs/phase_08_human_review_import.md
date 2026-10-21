@@ -13,7 +13,7 @@ Contexts imported: PERSONAL 13, PROPERTY 13, FORESTRY 2.
 The existing `import_reviews` mechanism now accepts the Phase 07 format with its
 original queue manifest. It writes the existing `TransactionLabelReview` model;
 there is no migration or second label system. Only completed rows create records.
-The existing reviewer alias `risto`, original file SHA-256, timestamp, taxonomy
+The existing reviewer alias `<REVIEWER_ALIAS>`, original file SHA-256, timestamp, taxonomy
 version 2 and label source `human_phase07_csv_v1` preserve provenance. The exact
 input bytes are archived through the existing review-import archive convention.
 Weak suggestions remain separate. Existing conflicting human reviews are rejected,

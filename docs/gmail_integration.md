@@ -32,9 +32,9 @@ An optional local Codex configuration is:
 
 ```toml
 [mcp_servers.tapio_gmail]
-command = "/Users/tyokone/Documents/Tapio/.venv/bin/python"
+command = "/path/to/Tapio/.venv/bin/python"
 args = ["-m", "integrations.gmail.server"]
-cwd = "/Users/tyokone/Documents/Tapio"
+cwd = "/path/to/Tapio"
 startup_timeout_sec = 30
 tool_timeout_sec = 30
 ```

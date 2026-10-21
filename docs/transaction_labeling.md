@@ -361,7 +361,7 @@ skipped rows. This phase adds no schema changes or replacement workflow.
 
 ```sh
 uv run python -m data_pipeline.labels.import_transaction_reviews \
-  --file data/processed/bank/review_queue_v2_grouped.csv --reviewer risto
+  --file data/processed/bank/review_queue_v2_grouped.csv --reviewer local-reviewer
 uv run python -m data_pipeline.labels.export_ground_truth --account-key primary --report-only
 uv run python -m data_pipeline.labels.export_ground_truth --account-key primary
 ```

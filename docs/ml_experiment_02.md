@@ -140,7 +140,7 @@ from 37.80% versus weekly naive to 10.15% versus persistence.
 
 ```sh
 uv sync --locked
-uv run python -m ml.experiments.temperature_consumption --metering-point 643006966022870423 --winter
+uv run python -m ml.experiments.temperature_consumption --metering-point <METERING_POINT_CONSUMPTION> --winter
 ```
 
 Each run creates an ignored `ml/evaluation/output/experiment_02_<UTC timestamp>/`.

@@ -7,7 +7,7 @@ This is a separate local usability pilot around the accepted `PHASE09H_EXCLUSIVE
 From the project directory, with the existing private API key and PostgreSQL database available:
 
 ```sh
-cd /Users/tyokone/Documents/Tapio
+cd /path/to/Tapio
 colima start
 docker-compose up -d postgres
 TAPIO_PILOT_MODE=true .venv/bin/uvicorn tapio.pilot.api:app --host 127.0.0.1 --port 8011

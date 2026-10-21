@@ -73,7 +73,10 @@ def priority(t, linked, reversals):
     return "P3", ["ordinary_personal_or_low_materiality_review_later"]
 
 
-def build_audit(queries=None, source_dir=Path("/Users/tyokone/Downloads")):
+DEFAULT_SOURCE_DIR = Path.home() / "Downloads"
+
+
+def build_audit(queries=None, source_dir=DEFAULT_SOURCE_DIR):
     q = queries or Queries()
     with q.session() as s:
         runs = list(

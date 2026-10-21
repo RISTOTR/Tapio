@@ -90,7 +90,7 @@ local and UTC cutoffs. Final results above are from successful runs after that f
 
 ```sh
 uv sync --locked
-uv run python -m ml.experiments.temperature_consumption --metering-point 643006966022870423
+uv run python -m ml.experiments.temperature_consumption --metering-point <METERING_POINT_CONSUMPTION>
 TAPIO_TEST_DATABASE_URL=postgresql+psycopg://tapio:tapio_local@localhost:5433/tapio uv run pytest -q
 ```
 

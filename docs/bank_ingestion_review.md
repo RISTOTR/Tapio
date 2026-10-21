@@ -60,7 +60,7 @@ Total signed amounts also agree. Existing energy data remains **15,431 readings*
 | Vattenfall Oy | 21 |
 | Elenia Verkko Oyj | 21 |
 | Metsänhoitoyhdistys Keski-Suomi | 8 |
-| Stora Enso Oyj | 2 |
+| <TIMBER_BUYER> | 2 |
 | Verohallinto | 9 |
 | Paytrail Oyj | 38 |
 
@@ -74,7 +74,7 @@ Direct merchants retain a null ultimate_recipient and use their normalized name.
 ## Forestry and property checks
 
 **Transactions currently classified into forestry business context:** 10, involving
-Metsänhoitoyhdistys Keski-Suomi and Stora Enso Oyj. Total credits: **€40,728.44**.
+Metsänhoitoyhdistys Keski-Suomi and <TIMBER_BUYER>. Total credits: **€40,728.44**.
 Total debits: **€4,194.62**. These are cash-flow totals, not timber-only income,
 net costs, or deductible forestry expenses; credits include a refund candidate.
 All 10 have an assigned economic-category suggestion, so category-unknown count

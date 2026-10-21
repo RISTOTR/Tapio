@@ -71,9 +71,9 @@ user confirmed that the day file belongs to the same meter.
 
 ## Real PostgreSQL imports and reconciliation
 
-All real series use external metering-point code `643006966022870423` supplied by
+All real series use external metering-point code `<METERING_POINT_CONSUMPTION>` supplied by
 the user. The separate Vattenfall solar-settlement usage-point identifier
-`643006966035063447` is documented only: no second MeteringPoint was created and
+`<METERING_POINT_PRODUCTION>` is documented only: no second MeteringPoint was created and
 no CSV rows were duplicated across identifiers. That contractual association can
 be modeled later if an actual source requires it.
 
@@ -160,7 +160,7 @@ independent validation of every supplier measurement.
 Reproduce monthly checks with:
 
 ```sh
-uv run python -m data_pipeline.verify_energy --metering-point 643006966022870423
+uv run python -m data_pipeline.verify_energy --metering-point <METERING_POINT_CONSUMPTION>
 ```
 
 Reproduce the exact August comparison using the read-only helper:
@@ -174,7 +174,7 @@ from data_pipeline.verify_energy import reconcile_month
 with SessionLocal() as session:
     result = reconcile_month(
         session,
-        "643006966022870423",
+        "<METERING_POINT_CONSUMPTION>",
         date(2026, 8, 1),
         Decimal("588.02"),
         Decimal("74.20"),

@@ -204,8 +204,8 @@ No TF-IDF, classifier, embeddings, training or F1 calculation was performed.
 ```sh
 uv sync --locked
 uv run alembic upgrade head
-uv run python -m data_pipeline.ingest.bank --file /Users/tyokone/Downloads/tapahtumat20250101-20251231.csv --account-key primary
-uv run python -m data_pipeline.ingest.bank --file /Users/tyokone/Downloads/tapahtumat20260101-20261007.csv --account-key primary
+uv run python -m data_pipeline.ingest.bank --file /private/path/tapahtumat20250101-20251231.csv --account-key primary
+uv run python -m data_pipeline.ingest.bank --file /private/path/tapahtumat20260101-20261007.csv --account-key primary
 uv run python -m data_pipeline.verify_bank --account-key primary --private-output
 ```
 

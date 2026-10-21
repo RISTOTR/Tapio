@@ -17,7 +17,7 @@ Supplier reporting delays are unknown; this availability assumption must be chec
 before any operational use.
 
 The sole data source is the existing combined hourly EnergyReading series for
-meter 643006966022870423. Queries are read-only; no schema or ingestion changes.
+meter <METERING_POINT_CONSUMPTION>. Queries are read-only; no schema or ingestion changes.
 The intended source period is January 1, 2025 through October 5, 2026, inclusive,
 using local calendar dates. Query bounds and hyperparameters are fixed in code.
 
@@ -107,7 +107,7 @@ not anomalies. There are no anomaly labels or evidence of abnormal behavior.
 
 ```sh
 uv sync --locked
-uv run python -m ml.experiments.temperature_consumption --metering-point 643006966022870423
+uv run python -m ml.experiments.temperature_consumption --metering-point <METERING_POINT_CONSUMPTION>
 ```
 
 Use the running local PostgreSQL database and configured DATABASE_URL. Each run
