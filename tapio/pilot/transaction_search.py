@@ -18,6 +18,7 @@ MAX_SCANNED = 100_000
 MAX_MATCHES = 1000
 FIELDS = (
     "raw_description",
+    "raw_source.Selitys",
     "raw_merchant",
     "normalized_merchant",
     "recipient",
@@ -152,7 +153,8 @@ def matching_terms(fields, terms):
     return matches
 
 
-def retrieve_search(plan, session_factory):
+def retrieve_search(plan, session_factory, *, hide_labels=False):
+    """hide_labels is an offline ablation projection; production defaults stay unchanged."""
     plan = SearchPlan.model_validate(plan)
     t, r = Transaction, TransactionLabelReview
     query = select(t, r).outerjoin(r, r.transaction_id == t.id).order_by(t.booking_date, t.id)
@@ -169,17 +171,24 @@ def retrieve_search(plan, session_factory):
                 raise ValueError("TRANSACTION_SEARCH_LIMIT")
             first = first or tx.booking_date
             last = tx.booking_date
-            confirmed = review is not None and review.review_status == "REVIEWED"
+            confirmed = (
+                not hide_labels and review is not None and review.review_status == "REVIEWED"
+            )
             fields = {
                 "raw_description": tx.message,
+                "raw_source.Selitys": (tx.raw_source or {}).get("Selitys")
+                if isinstance(tx.raw_source, dict)
+                else None,
                 "raw_merchant": tx.raw_counterparty,
                 "normalized_merchant": tx.normalized_counterparty,
                 "recipient": tx.ultimate_recipient,
                 "processor": tx.payment_intermediary,
                 "confirmed_category": review.confirmed_category if confirmed else None,
                 "confirmed_context": review.confirmed_business_context if confirmed else None,
-                "suggested_category": tx.category if not confirmed else None,
-                "suggested_context": tx.business_context if not confirmed else None,
+                "suggested_category": tx.category if not confirmed and not hide_labels else None,
+                "suggested_context": tx.business_context
+                if not confirmed and not hide_labels
+                else None,
             }
             matches = matching_terms(fields, plan.terms)
             if not matches:
@@ -195,7 +204,9 @@ def retrieve_search(plan, session_factory):
                     "currency": tx.currency,
                     "direction": tx.direction.value,
                     "label_authority": "HUMAN_REVIEWED" if confirmed else "UNREVIEWED",
-                    "review_status": review.review_status if review else "UNREVIEWED",
+                    "review_status": review.review_status
+                    if review and not hide_labels
+                    else "UNREVIEWED",
                     "category": review.confirmed_category if confirmed else None,
                     "business_context": review.confirmed_business_context if confirmed else None,
                     "matched_terms": matches,
@@ -208,8 +219,9 @@ def retrieve_search(plan, session_factory):
         "scanned_rows": scanned,
         "observed_from": first.isoformat() if first else None,
         "observed_to": last.isoformat() if last else None,
-        "searched_fields": list(FIELDS),
+        "searched_fields": list(FIELDS[:6] if hide_labels else FIELDS),
         "matching": "NORMALIZED_TOKEN_PHRASE_V1",
+        "labels_hidden": hide_labels,
     }
 
 
@@ -219,6 +231,11 @@ def search_response(evidence, session):
 
     if evidence.get("complete") is not True:
         raise ValueError("TRANSACTION_SEARCH_LIMIT")
+    from tapio.pilot.search_display import prepare, summary
+
+    catalog = bool(evidence.get("catalog_concept") or evidence.get("literal_search"))
+    if catalog:
+        evidence = prepare(evidence)
     rows = evidence["items"]
     terms = evidence["plan"]["terms"]
     direct = (
@@ -228,6 +245,11 @@ def search_response(evidence, session):
         + ", ".join(terms)
         + "."
     )
+    if catalog:
+        text, search_notes = summary(rows, evidence.get("language", "en"))
+        direct = text["found"].format(n=len(rows)) if rows else text["none"]
+    elif not rows:
+        direct += " This does not establish zero spending."
     lines = []
     for row in rows[:30]:
         status = (
@@ -237,10 +259,18 @@ def search_response(evidence, session):
         )
         if row["label_authority"] == "HUMAN_REVIEWED" and unresolved(row):
             status += "; unresolved"
+        if catalog:
+            status = (
+                "HUMAN_CONFIRMED: " + row["category"] + " / " + row["business_context"]
+                if row["label_authority"] == "HUMAN_REVIEWED"
+                else text["unresolved"]
+            )
         lines.append(
             f"{row['booking_date']} — {row['counterparty']} — "
             f"{amount(row['amount'], row['currency'])}; {status}. "
-            "Matched: " + ", ".join(m["term"] for m in row["matched_terms"]) + "."
+            + (text["matched"] if catalog else "Matched: ")
+            + ", ".join(m["term"] for m in row["matched_terms"])
+            + "."
         )
     public_rows = [{k: v for k, v in row.items() if k != "id"} for row in rows]
 
@@ -260,6 +290,11 @@ def search_response(evidence, session):
         "Text matching does not establish purpose or tax deductibility. "
         "Imported rows do not prove complete bank-statement coverage."
     )
+    if evidence.get("labels_hidden"):
+        note += (
+            " Offline label ablation: confirmed and suggested labels were hidden before search. "
+            "No text match does not establish absence of purchases in that category or context."
+        )
     if any(
         field.startswith("suggested_")
         for row in rows
@@ -269,6 +304,14 @@ def search_response(evidence, session):
         note += " Suggested-label matches are non-authoritative; they are not confirmed labels."
     if len(rows) > 30:
         note += " First 30 matches shown; all matches are retained in transaction details."
+    if catalog:
+        note = " ".join(
+            [
+                *search_notes,
+                text["availability"].format(n=sum(unresolved(r) for r in rows)),
+                text["coverage"],
+            ]
+        )
     states = ["SUPPORTED", "NO_MATCH"] if not rows else ["SUPPORTED"]
     if any(unresolved(r) for r in rows):
         states.append("HUMAN_REVIEW_REQUIRED")
@@ -289,7 +332,9 @@ def search_response(evidence, session):
                 records=len(rows),
             )
         ],
-        evidence_summary=clean(["Search terms: " + ", ".join(terms) + "."]),
+        evidence_summary=clean(
+            [(text["terms"] if catalog else "Search terms: ") + ", ".join(terms) + "."]
+        ),
         optional_details=clean(
             {
                 "transactions": public_rows,

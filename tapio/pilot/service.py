@@ -16,6 +16,7 @@ from tapio.agent.mandatory import EvidenceView, coordinated_registry, required_v
 from tapio.agent.providers.openai import read_key
 from tapio.agent.providers.openai_exclusive import OpenAIExclusiveModel
 from tapio.agent.render_bounded import render_answer
+from tapio.pilot.concepts import catalog_query, concept_plan
 from tapio.pilot.config import (
     HISTORY,
     MODEL,
@@ -34,7 +35,9 @@ from tapio.pilot.failures import (
     unconstrained_overview,
 )
 from tapio.pilot.history import History
+from tapio.pilot.literal_search import literal_plan
 from tapio.pilot.named_subject import retrieve_subject
+from tapio.pilot.period_comparison import comparison_plan, comparison_response, retrieve_comparison
 from tapio.pilot.presentation import TITLES, present, provenance, unsupported
 from tapio.pilot.search_planner import plan_search
 from tapio.pilot.transaction_search import (
@@ -207,6 +210,7 @@ class Pilot:
         public = None
         named_subject = None
         search_evidence = None
+        comparison_evidence = None
         try:
             diagnostics.enter("CONFIGURATION")
             config, snapshot = self.config_loader()
@@ -216,21 +220,46 @@ class Pilot:
             diagnostics.enter("SOURCE_PREFLIGHT")
             before = await asyncio.to_thread(self.fingerprint_check, self.engine, config)
             diagnostics.data["database_available"] = True
-            if search_intent(question):
+            comparison = comparison_plan(question)
+            catalog = catalog_query(question)
+            literal = literal_plan(question) if not catalog and not comparison else None
+            if literal:
+                try:
+                    expanded = concept_plan(literal.terms[0], literal.date_range)
+                    catalog = (literal.terms[0], "en")
+                    literal = expanded
+                except ValueError:
+                    pass
+            if comparison:
+                diagnostics.enter("EVIDENCE_RETRIEVAL")
+                diagnostics.data["retrieval_attempted"] = True
+                diagnostics.data["plan_validation"] = "VALID"
+                diagnostics.data["filtered_comparison"] = comparison.model_dump(mode="json")
+                comparison_evidence = await asyncio.to_thread(
+                    retrieve_comparison, comparison, lambda: readonly_session(self.engine)
+                )
+                diagnostics.data["completeness_result"] = "COMPARISON_COMPLETE"
+                response = {"status": "COMPLETE", "results": [], "answer": "", "model_rounds": 0}
+            elif catalog or literal or search_intent(question):
                 diagnostics.enter("QUESTION_PERIOD")
                 dates = requested_dates(question)
                 diagnostics.data["period"] = dates.model_dump(mode="json") if dates else None
-                diagnostics.enter("MODEL_INITIALIZATION")
-                model = ObservedModel(
-                    self.model_factory(directory / "provider_protocol"), diagnostics
-                )
-                diagnostics.enter("MODEL_PLANNER")
-                diagnostics.data["planner_called"] = True
-                async with asyncio.timeout(45):
-                    search_plan = validate_search_plan(
-                        question, await self.search_planner(model, question)
+                if literal:
+                    search_plan = literal
+                elif catalog:
+                    search_plan = concept_plan(catalog[0], dates)
+                else:
+                    diagnostics.enter("MODEL_INITIALIZATION")
+                    model = ObservedModel(
+                        self.model_factory(directory / "provider_protocol"), diagnostics
                     )
-                diagnostics.data["provider_available"] = True
+                    diagnostics.enter("MODEL_PLANNER")
+                    diagnostics.data["planner_called"] = True
+                    async with asyncio.timeout(45):
+                        search_plan = validate_search_plan(
+                            question, await self.search_planner(model, question)
+                        )
+                    diagnostics.data["provider_available"] = True
                 diagnostics.data["plan_validation"] = "VALID"
                 diagnostics.data["transaction_search"] = search_plan.model_dump(mode="json")
                 diagnostics.enter("EVIDENCE_RETRIEVAL")
@@ -238,10 +267,20 @@ class Pilot:
                 search_evidence = await asyncio.to_thread(
                     self.search_loader, search_plan, lambda: readonly_session(self.engine)
                 )
+                if literal and not catalog:
+                    search_evidence["literal_search"] = True
+                if catalog:
+                    search_evidence["catalog_concept"] = catalog[0]
+                    search_evidence["language"] = catalog[1]
                 diagnostics.data["completeness_result"] = "SEARCH_COMPLETE"
                 diagnostics.data["evidence_views_requested"] = ["TRANSACTION_SEARCH"]
                 diagnostics.data["evidence_views_returned"] = ["TRANSACTION_SEARCH"]
-                response = {"status": "COMPLETE", "results": [], "answer": "", "model_rounds": 1}
+                response = {
+                    "status": "COMPLETE",
+                    "results": [],
+                    "answer": "",
+                    "model_rounds": 0 if catalog or literal else 1,
+                }
             else:
                 diagnostics.enter("QUESTION_PERIOD")
                 period = period_for(question)
@@ -314,7 +353,9 @@ class Pilot:
         if failure is None:
             try:
                 diagnostics.enter("PRESENTATION")
-                if search_evidence is not None:
+                if comparison_evidence is not None:
+                    public = comparison_response(comparison_evidence, session)
+                elif search_evidence is not None:
                     public = search_response(search_evidence, session)
                 else:
                     public = present(

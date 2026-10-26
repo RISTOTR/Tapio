@@ -331,7 +331,7 @@ def test_no_match_is_supported(bank, tmp_path):
     response = ask(pilot, "No-such-term XYZ")
     assert response.evidence_states == ["SUPPORTED", "NO_MATCH"]
     assert response.presentation_mode == "TRANSACTION_SEARCH"
-    assert "no imported bank transactions" in response.answer
+    assert "No matching imported transactions" in response.answer
     assert "unavailable" not in response.answer
 
 
@@ -353,7 +353,7 @@ def test_invalid_plan_does_not_retrieve(tmp_path):
 
     pilot.search_planner = invalid
     pilot.search_loader = lambda *args: pytest.fail("Invalid plan must not retrieve")
-    response = ask(pilot, "Show dental transactions")
+    response = ask(pilot, "Show all transactions related to orthodontics")
     assert response.failure_category == "PLAN_INVALID"
 
 

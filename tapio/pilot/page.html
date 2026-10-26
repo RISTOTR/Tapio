@@ -37,7 +37,7 @@ function show(data){
  list('evidence',data.evidence_summary||[]);
  el('transactions').textContent=JSON.stringify(details.transactions||[],null,2);
  el('documents').textContent=JSON.stringify({documents:details.documents||[],reconciliation:details.reconciliation||[]},null,2);
- el('other-details').textContent=JSON.stringify({bank_aggregates:details.bank_aggregates||[],forestry_sales:details.forestry_sales||[],comparison:details.comparison||[]},null,2);
+ el('other-details').textContent=JSON.stringify({bank_aggregates:details.bank_aggregates||[],forestry_sales:details.forestry_sales||[],comparison:details.comparison||[],search:details.search||{}},null,2);
  el('coverage').textContent=JSON.stringify({coverage:data.coverage,human_review:data.human_review,evidence:data.evidence,limitations:data.limitations},null,2);
  el('validated-answer').textContent=data.answer;
  document.querySelectorAll('details').forEach(item=>item.open=false);
