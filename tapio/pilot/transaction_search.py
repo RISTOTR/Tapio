@@ -10,6 +10,7 @@ from pydantic import Field, model_validator
 from sqlalchemy import select
 
 from apps.api.app.domain.models import Transaction, TransactionLabelReview
+from tapio.knowledge.fields import SOURCE_FIELDS, source_text_fields
 from tapio.pilot.contracts import Coverage, Evidence, PilotResponse
 from tapio.pilot.subject_identity import generic_subject
 from tapio.tools.schemas import Schema
@@ -17,12 +18,7 @@ from tapio.tools.schemas import Schema
 MAX_SCANNED = 100_000
 MAX_MATCHES = 1000
 FIELDS = (
-    "raw_description",
-    "raw_source.Selitys",
-    "raw_merchant",
-    "normalized_merchant",
-    "recipient",
-    "processor",
+    *SOURCE_FIELDS,
     "confirmed_category",
     "confirmed_context",
     "suggested_category",
@@ -175,14 +171,7 @@ def retrieve_search(plan, session_factory, *, hide_labels=False):
                 not hide_labels and review is not None and review.review_status == "REVIEWED"
             )
             fields = {
-                "raw_description": tx.message,
-                "raw_source.Selitys": (tx.raw_source or {}).get("Selitys")
-                if isinstance(tx.raw_source, dict)
-                else None,
-                "raw_merchant": tx.raw_counterparty,
-                "normalized_merchant": tx.normalized_counterparty,
-                "recipient": tx.ultimate_recipient,
-                "processor": tx.payment_intermediary,
+                **source_text_fields(tx),
                 "confirmed_category": review.confirmed_category if confirmed else None,
                 "confirmed_context": review.confirmed_business_context if confirmed else None,
                 "suggested_category": tx.category if not confirmed and not hide_labels else None,
@@ -219,7 +208,7 @@ def retrieve_search(plan, session_factory, *, hide_labels=False):
         "scanned_rows": scanned,
         "observed_from": first.isoformat() if first else None,
         "observed_to": last.isoformat() if last else None,
-        "searched_fields": list(FIELDS[:6] if hide_labels else FIELDS),
+        "searched_fields": list(SOURCE_FIELDS if hide_labels else FIELDS),
         "matching": "NORMALIZED_TOKEN_PHRASE_V1",
         "labels_hidden": hide_labels,
     }
