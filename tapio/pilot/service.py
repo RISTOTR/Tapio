@@ -26,8 +26,24 @@ from tapio.pilot.config import (
     source_fingerprints,
 )
 from tapio.pilot.contracts import Session
+from tapio.pilot.diagnostics import Diagnostics, ObservedModel
+from tapio.pilot.failures import (
+    classify_failure,
+    coverage_summary,
+    has_partial_evidence,
+    unconstrained_overview,
+)
 from tapio.pilot.history import History
+from tapio.pilot.named_subject import retrieve_subject
 from tapio.pilot.presentation import TITLES, present, provenance, unsupported
+from tapio.pilot.search_planner import plan_search
+from tapio.pilot.transaction_search import (
+    requested_dates,
+    retrieve_search,
+    search_intent,
+    search_response,
+    validate_search_plan,
+)
 
 
 def period_for(question):
@@ -66,7 +82,7 @@ class AcceptedModel(OpenAIExclusiveModel):
         return result
 
 
-def isolated_engine(observed):
+def isolated_engine(observed, diagnostics=None):
     """Reuse the exact accepted function code with a per-call audit destination.
 
     A private globals mapping avoids process-global monkeypatching and leaves all
@@ -78,8 +94,29 @@ def isolated_engine(observed):
             # The accepted default writes the full ledger to a historical directory.
             # Keep it in memory; the pilot persists only necessary provenance below.
             kwargs["audit_path"] = None
-            super().__init__(*args, **kwargs)
+            if diagnostics:
+                diagnostics.enter("COORDINATOR_INITIALIZATION")
+                diagnostics.data["coordinator_called"] = True
+            try:
+                super().__init__(*args, **kwargs)
+            except Exception as exc:
+                if diagnostics:
+                    diagnostics.failed(exc)
+                raise
+            if diagnostics:
+                diagnostics.data["plan_validation"] = "VALID"
             observed.append(self)
+
+        async def execute(self):
+            if diagnostics:
+                diagnostics.enter("EVIDENCE_RETRIEVAL")
+                diagnostics.data["retrieval_attempted"] = True
+            try:
+                return await super().execute()
+            except Exception as exc:
+                if diagnostics:
+                    diagnostics.failed(exc)
+                raise
 
     runner = FunctionType(
         run_scoped_agent.__code__,
@@ -136,6 +173,9 @@ class Pilot:
         engine=None,
         fingerprint_check=source_fingerprints,
         registry_factory=None,
+        subject_loader=retrieve_subject,
+        search_planner=plan_search,
+        search_loader=retrieve_search,
     ):
         self.history = history or History(HISTORY)
         self.model_factory = model_factory or (
@@ -145,53 +185,109 @@ class Pilot:
         self.engine = engine
         self.fingerprint_check = fingerprint_check
         self.registry_factory = registry_factory
+        self.subject_loader = subject_loader
+        self.search_planner = search_planner
+        self.search_loader = search_loader
         self.lock = asyncio.Lock()
 
-    async def ask(self, question):
+    async def ask(self, question, *, route="SERVICE"):
         async with self.lock:
-            return await self._ask(question)
+            return await self._ask(question, route)
 
-    async def _ask(self, question):
+    async def _ask(self, question, route):
         started = time.monotonic()
-        config, snapshot = self.config_loader()
-        if self.engine is None:
-            self.engine = readonly_engine()
         session_id, timestamp = str(uuid4()), datetime.now(UTC).isoformat()
+        diagnostics = Diagnostics(session_id, route)
         directory = self.history.directory(session_id)
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        directory.chmod(0o700)
+        config = {}
         observed, failure, model, before = [], None, None, None
         response = {"status": "UNSUPPORTED", "results": [], "answer": ""}
         public = None
+        named_subject = None
+        search_evidence = None
         try:
+            diagnostics.enter("CONFIGURATION")
+            config, snapshot = self.config_loader()
+            diagnostics.data["accepted_config_id"] = config["identifier"]
+            if self.engine is None:
+                self.engine = readonly_engine()
+            diagnostics.enter("SOURCE_PREFLIGHT")
             before = await asyncio.to_thread(self.fingerprint_check, self.engine, config)
-            period = period_for(question)
-            registry = (
-                self.registry_factory(directory)
-                if self.registry_factory
-                else coordinated_registry(
-                    coverage=snapshot["bank_coverage"],
-                    queries=Queries(session_factory=lambda: readonly_session(self.engine)),
-                    audit_path=directory / "tool_audit.jsonl",
+            diagnostics.data["database_available"] = True
+            if search_intent(question):
+                diagnostics.enter("QUESTION_PERIOD")
+                dates = requested_dates(question)
+                diagnostics.data["period"] = dates.model_dump(mode="json") if dates else None
+                diagnostics.enter("MODEL_INITIALIZATION")
+                model = ObservedModel(
+                    self.model_factory(directory / "provider_protocol"), diagnostics
                 )
-            )
-            if set(registry.tools) - set(TITLES) or any(
-                t.classification != "READ_ONLY" for t in registry.tools.values()
-            ):
-                raise ValueError("PILOT_NON_READONLY_CAPABILITY")
-            if schema_hash(registry.specifications()) != config["tool_registry_hash"]:
-                raise ValueError("PILOT_REGISTRY_CHANGED")
-            model = self.model_factory(directory / "provider_protocol")
-            response = await isolated_engine(observed)(
-                PREFIX + question, model, registry, period=period, max_rounds=6
-            )
-            validate_answer(response, observed[0] if observed else None, model)
+                diagnostics.enter("MODEL_PLANNER")
+                diagnostics.data["planner_called"] = True
+                async with asyncio.timeout(45):
+                    search_plan = validate_search_plan(
+                        question, await self.search_planner(model, question)
+                    )
+                diagnostics.data["provider_available"] = True
+                diagnostics.data["plan_validation"] = "VALID"
+                diagnostics.data["transaction_search"] = search_plan.model_dump(mode="json")
+                diagnostics.enter("EVIDENCE_RETRIEVAL")
+                diagnostics.data["retrieval_attempted"] = True
+                search_evidence = await asyncio.to_thread(
+                    self.search_loader, search_plan, lambda: readonly_session(self.engine)
+                )
+                diagnostics.data["completeness_result"] = "SEARCH_COMPLETE"
+                diagnostics.data["evidence_views_requested"] = ["TRANSACTION_SEARCH"]
+                diagnostics.data["evidence_views_returned"] = ["TRANSACTION_SEARCH"]
+                response = {"status": "COMPLETE", "results": [], "answer": "", "model_rounds": 1}
+            else:
+                diagnostics.enter("QUESTION_PERIOD")
+                period = period_for(question)
+                diagnostics.data["period"] = period
+                if unconstrained_overview(question):
+                    raise ValueError("QUESTION_TOO_BROAD")
+                diagnostics.enter("READ_ONLY_REGISTRY")
+                registry = (
+                    self.registry_factory(directory)
+                    if self.registry_factory
+                    else coordinated_registry(
+                        coverage=snapshot["bank_coverage"],
+                        queries=Queries(session_factory=lambda: readonly_session(self.engine)),
+                        audit_path=directory / "tool_audit.jsonl",
+                    )
+                )
+                if set(registry.tools) - set(TITLES) or any(
+                    t.classification != "READ_ONLY" for t in registry.tools.values()
+                ):
+                    raise ValueError("PILOT_NON_READONLY_CAPABILITY")
+                if schema_hash(registry.specifications()) != config["tool_registry_hash"]:
+                    raise ValueError("PILOT_REGISTRY_CHANGED")
+                diagnostics.enter("MODEL_INITIALIZATION")
+                model = ObservedModel(
+                    self.model_factory(directory / "provider_protocol"), diagnostics
+                )
+                diagnostics.enter("ACCEPTED_AGENT")
+                response = await isolated_engine(observed, diagnostics)(
+                    PREFIX + question, model, registry, period=period, max_rounds=6
+                )
+                diagnostics.data["agent_status"] = response["status"]
+                diagnostics.enter("FINAL_VALIDATION")
+                if response["status"] == "INVALID_FINAL_CONTENT":
+                    raise ValueError("INVALID_FINAL_CONTENT")
+                validate_answer(response, observed[0] if observed else None, model)
+                diagnostics.enter("NAMED_SUBJECT_RETRIEVAL")
+                named_subject = await asyncio.to_thread(
+                    self.subject_loader, question, lambda: readonly_session(self.engine)
+                )
+            diagnostics.enter("SOURCE_POSTFLIGHT")
             after = await asyncio.to_thread(self.fingerprint_check, self.engine, config)
             if before != after:
                 raise ValueError("SOURCE_CHANGED_DURING_QUESTION")
         except Exception as exc:
-            message = str(exc)
-            failure = (
-                message if re.fullmatch(r"[A-Z][A-Z0-9_]{0,80}", message) else type(exc).__name__
-            )
+            diagnostics.failed(exc)
+            failure = diagnostics.data["failure"]["code"]
         usage = getattr(model, "usage", [])
         input_tokens = sum(u["usage"].get("prompt_tokens", 0) for u in usage)
         cached = sum(
@@ -217,21 +313,82 @@ class Pilot:
         )
         if failure is None:
             try:
-                public = present(response, session, config["human_review_counts"])
-            except (ValueError, KeyError, TypeError):
+                diagnostics.enter("PRESENTATION")
+                if search_evidence is not None:
+                    public = search_response(search_evidence, session)
+                else:
+                    public = present(
+                        response,
+                        session,
+                        config["human_review_counts"],
+                        question=question,
+                        named_subject=named_subject,
+                    )
+            except (ValueError, KeyError, TypeError) as exc:
+                diagnostics.failed(exc)
                 failure = "PRESENTATION_VALIDATION_FAILED"
-        if failure:
-            public = unsupported(session)
         coordinator = observed[0] if observed else None
+        if coordinator:
+            diagnostics.data["completeness_result"] = coordinator.state()["status"]
+            diagnostics.data["retrieval_calls"] = [
+                {
+                    "tool": t["tool"],
+                    "ok": t["result"].get("ok", False),
+                    "truncated": t["result"].get("data", {}).get("truncated", False),
+                }
+                for t in coordinator.trace
+            ]
+        if failure:
+            detail = diagnostics.data["failure"]
+            if detail["category"] == "INFRASTRUCTURE_UNAVAILABLE" and detail["code"].startswith(
+                "DATABASE_"
+            ):
+                diagnostics.data["database_available"] = False
+            detail["category"] = classify_failure(detail, diagnostics.data, coordinator, response)
+            if detail["category"] == "PLAN_INVALID":
+                diagnostics.data["plan_validation"] = "INVALID"
+            public = unsupported(
+                session,
+                diagnostics.data["failure"]["category"],
+                failure_code=diagnostics.data["failure"]["code"],
+                question=question,
+                plan=coordinator.plan.model_dump(mode="json") if coordinator else None,
+                coverage_note=coverage_summary(coordinator),
+                partial_found=has_partial_evidence(coordinator),
+            )
+        coordinator = observed[0] if observed else None
+        diagnostics.data["model_calls"] = session.model_calls
+        if coordinator:
+            diagnostics.data["evidence_views_requested"] = [
+                r.view.value for r in coordinator.requirements
+            ]
+            diagnostics.data["evidence_views_returned"] = sorted(
+                {view for meta in coordinator.ledger.handles.values() for view in meta["views"]}
+            )
+            diagnostics.data["evidence_errors"] = [
+                {"code": e.get("code"), "tool": e.get("tool")} for e in coordinator.errors
+            ]
+        diagnostics.data["presentation_mode"] = public.presentation_mode
+        diagnostics.data["presentation_failure_category"] = public.failure_category
+        from tapio.pilot.subject_identity import extract_subject
+
+        diagnostics.data["extracted_subject"] = extract_subject(question)
+        diagnostics.data["resolved_subject"] = (
+            named_subject.get("canonical_subject") if named_subject else None
+        )
+        diagnostics.enter("PRIVATE_HISTORY")
         record = {
             "timestamp": timestamp,
             "question": question,
             "response": public.model_dump(mode="json"),
             "failure": failure,
             "source_fingerprints_verified": failure is None,
-            "configuration_id": config["identifier"],
+            "configuration_id": config.get("identifier"),
+            "diagnostics": diagnostics.data,
             "model": MODEL,
             "provenance": coordinator.provenance() if coordinator else None,
+            "named_subject": named_subject,
+            "transaction_search": search_evidence,
             "final_references": coordinator.final_validation.get("requested_final")
             if coordinator and hasattr(coordinator, "final_validation")
             else None,

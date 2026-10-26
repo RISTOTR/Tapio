@@ -1,5 +1,6 @@
 """Loopback-only pilot app; no imports of mutation or Gmail routers."""
 
+import logging
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
@@ -12,6 +13,8 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from tapio.pilot.config import require_mode
 from tapio.pilot.contracts import Ask, Feedback, PilotResponse
+from tapio.pilot.diagnostics import exception_detail
+from tapio.pilot.health import DATABASE_HELP, database_available
 from tapio.pilot.service import Pilot
 
 app = FastAPI(title="Tapio read-only pilot", docs_url=None, redoc_url=None)
@@ -61,8 +64,13 @@ async def ask(body: Ask):
     if not body.question.strip():
         raise HTTPException(422, "Please enter a question.")
     try:
-        return await get_pilot().ask(body.question.strip())
-    except Exception:
+        return await get_pilot().ask(body.question.strip(), route="POST /pilot/ask")
+    except Exception as exc:
+        # Storage/bootstrap failures cannot always be written to private history.
+        # Emit only safe structured metadata, never str(exc), SQL or traceback text.
+        logging.getLogger(__name__).error(
+            "Pilot request unavailable: %s", exception_detail(exc, "PRIVATE_HISTORY", debug=True)
+        )
         raise HTTPException(
             503,
             "Pilot configuration, source verification or private audit storage is unavailable. "
@@ -84,3 +92,14 @@ def feedback(session_id: UUID, body: Feedback):
 @app.get("/pilot/metrics")
 def metrics():
     return get_pilot().history.metrics()
+
+
+@app.get("/pilot/health")
+def health():
+    try:
+        database_available()
+    except Exception:
+        return JSONResponse(
+            {"status": "DATABASE_UNAVAILABLE", "detail": DATABASE_HELP}, status_code=503
+        )
+    return {"status": "READY", "detail": "Local database is available."}

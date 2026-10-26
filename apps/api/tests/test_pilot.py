@@ -90,6 +90,7 @@ def make_pilot(tmp_path, model=None, registry=None, check=None):
         engine=object(),
         fingerprint_check=check or (lambda engine, config: {"stable": "source"}),
         registry_factory=lambda directory: registry,
+        subject_loader=lambda question, session_factory: None,
     )
 
 

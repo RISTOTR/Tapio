@@ -1,11 +1,18 @@
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, JsonValue
 
 from tapio.tools.schemas import Schema
 
 State = Literal[
-    "SUPPORTED", "PARTIAL_COVERAGE", "HUMAN_REVIEW_REQUIRED", "AMBIGUOUS", "UNSUPPORTED"
+    "SUPPORTED",
+    "PARTIAL_COVERAGE",
+    "HUMAN_REVIEW_REQUIRED",
+    "AMBIGUOUS",
+    "UNSUPPORTED",
+    "NEEDS_NARROWING",
+    "UNAVAILABLE",
+    "NO_MATCH",
 ]
 FeedbackKind = Literal["GOOD", "INCOMPLETE", "WRONG_EVIDENCE", "UNCLEAR", "OTHER"]
 
@@ -84,6 +91,31 @@ class Session(Schema):
 
 class PilotResponse(Schema):
     answer: str
+    failure_category: str | None = None
+    suggestions: list[str] = Field(default_factory=list)
+    presentation_mode: Literal[
+        "TRANSACTION_SEARCH",
+        "NAMED_SUBJECT",
+        "QUESTION_TOO_BROAD",
+        "UNSUPPORTED_SCOPE",
+        "EVIDENCE_INCOMPLETE",
+        "EXECUTION_ERROR",
+        "PLAN_INVALID",
+        "INFRASTRUCTURE_UNAVAILABLE",
+        "FINANCIAL_TOTAL",
+        "TRANSACTION_REVIEW",
+        "AMBIGUITY",
+        "COMPARISON",
+        "EVIDENCE_LOOKUP",
+        "COVERAGE",
+        "TAX_BOUNDARY",
+    ] = "EVIDENCE_LOOKUP"
+    direct_answer: str = ""
+    relevant_breakdown: list[str] = Field(default_factory=list)
+    coverage_note: str = ""
+    human_review_note: str = ""
+    evidence_summary: list[str] = Field(default_factory=list)
+    optional_details: dict[str, JsonValue] = Field(default_factory=dict)
     evidence_state: State
     evidence_states: list[State]
     coverage: Coverage

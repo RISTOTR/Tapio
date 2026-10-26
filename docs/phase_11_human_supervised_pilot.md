@@ -8,12 +8,19 @@ From the project directory, with the existing private API key and PostgreSQL dat
 
 ```sh
 cd /path/to/Tapio
-colima start
-docker-compose up -d postgres
-TAPIO_PILOT_MODE=true .venv/bin/uvicorn tapio.pilot.api:app --host 127.0.0.1 --port 8011
+./scripts/start_pilot.sh
 ```
 
+The startup script starts Colima if needed, waits for PostgreSQL health, and verifies the frozen configuration and source fingerprints before serving requests. Keep Colima running while using the pilot. PostgreSQL restarts with Docker unless explicitly stopped. The page checks database availability before submitting a question; this check makes no model call. Database outages show a specific recovery message.
+
 Open **http://127.0.0.1:8011/pilot**. Type a question and click **Ask**. Each question is independent; previous questions are not added to the model context. Each submission may incur the displayed model cost. Requests run only when submitted; there is no scheduler, background agent or automatic retry. Stop with **Ctrl+C**. Pilot mode defaults to disabled. Bind only to loopback; this is not an authenticated or deployable remote service.
+
+For local troubleshooting, set `TAPIO_PILOT_DIAGNOSTICS=true` alongside pilot mode.
+Private question records then include safe stack-frame metadata as well as failure
+stage/category, planner/coordinator invocation and evidence-view diagnostics. A
+database outage is recorded separately from an unsupported question. See the
+[zero-call failure diagnosis](pilot_failure_diagnostics.md) for the request trace,
+verification and recovery steps. Year-only questions are supported.
 
 The endpoint can also be used directly:
 
@@ -29,7 +36,7 @@ curl -sS http://127.0.0.1:8011/pilot/ask \
 
 Before answering, the wrapper checks the immutable configuration, accepted implementation hashes, accepted evidence artifacts and current source-table fingerprints. The production registry must match the frozen registry schema/description hash and contain only the accepted read-only tools. PostgreSQL connections default to read-only transactions; each query session explicitly sets `READ ONLY`, has a statement timeout and rolls back on exit. No SQL execution, transaction update, review import, reconciliation confirmation, source import, Gmail, email, shell or arbitrary filesystem tool is exposed to the model. Private pilot logs are the only pilot filesystem writes.
 
-The final safety gate requires complete mandatory retrieval, complete valid explicit final handles, successful selected results, exact trusted rendering, the 850-word renderer bound, the tax boundary and unchanged source fingerprints. Coverage is derived before release. Invalid configuration fails closed with HTTP 503; a failed answer validation returns `UNSUPPORTED` with no financial evidence or free-form model fallback. Private history must be writable before an answer can be returned.
+The final safety gate requires complete mandatory retrieval, complete valid explicit final handles, successful selected results, exact trusted rendering, the 850-word renderer bound, the tax boundary and unchanged source fingerprints. Coverage is derived before release. Disabled mode or unavailable bootstrap/private storage fails closed with HTTP 503. Configuration and execution failures reached inside the service return `UNSUPPORTED` with a private failure category; failed answer validation returns no financial evidence or free-form model fallback. Private history must be writable before an answer can be returned.
 
 The minimal page is loopback-only, rejects cross-origin requests, uses text-only insertion for returned content and sends `Cache-Control: no-store`. The pilot app is separate from the existing API app and imports no mutation routes.
 
@@ -96,3 +103,89 @@ Completed verification: **837 tests passed**, preserving the existing 806 and ad
 The one live smoke asked: **“What were my main property expenses in 2026 and what is still incomplete?”** It passed the wrapper's safety gate and returned `AMBIGUOUS`, with human-review and partial-coverage disclosures. Its PROPERTY selection contained 20 human-reviewed transactions; it separately disclosed 95 excluded UNKNOWN-context rows and the overall 75/170 reviewed snapshot with 95 unresolved. It preserved the payment/reversal ambiguity and tax boundary. These unresolved rows were not assigned to PROPERTY.
 
 The smoke used two model calls over two rounds: 10,054 input tokens, zero cached input tokens and 147 output tokens. Measured latency was 11.252 seconds; estimated cost at the frozen rates was **$0.008202**. No feedback was fabricated. No further live question was executed. The local server is not left running; use the startup command above when beginning the supervised pilot.
+
+## Question-specific presentation
+
+The default page now displays a deterministic presentation projection **after** the
+accepted answer has passed every existing evidence, handle, renderer and source
+integrity check. Evidence required internally is not necessarily evidence that
+must be printed in full. Planning, retrieval, context semantics and tax boundaries
+are unchanged; the model does not write the new cards.
+
+The response adds `presentation_mode`, `direct_answer`, `relevant_breakdown`,
+`coverage_note`, `human_review_note`, `evidence_summary` and `optional_details`.
+The original `answer`, `coverage`, `evidence`, `human_review`, `limitations`, session
+metrics and private provenance remain available. Existing feedback and its five
+categories are unchanged. The original answer remains the validated renderer
+output; the default UI leads with the new direct answer.
+
+Seven deterministic modes cover financial totals, transaction review, ambiguity,
+comparison, evidence lookup, coverage and tax boundaries. Financial cards copy
+existing authoritative aggregate fields, distinguish timber income from all
+forestry credits and show only relevant context/category breakdowns. They do not
+sum a bounded page, mix currencies, infer a merchant's context or substitute
+invoice/sale values for bank cash flow. If the retrieved evidence lacks a complete
+reviewed total for the requested scope (including a provider-specific total), the
+card says so; presentation does not fetch missing evidence or manufacture a total.
+
+Review cards lead with the unresolved count and preview at most ten retrieved
+rows. Additional rows are explicitly omitted from the summary, not discarded.
+All retrieved transaction rows are in collapsed optional details, with the
+retrieved/expected counts retained. The preview never claims to be the whole list.
+A complete retrieved list still does not establish complete bank-statement coverage.
+
+Reconciliation facts are deduplicated by source identity and matching content.
+Distinct invoices with equal amounts and conflicting variants remain distinct.
+Document/catalog projections of the same source are merged only when their shared
+facts agree. Evidence handles and original result/provenance structures are not
+removed or edited. Amount matching uses Decimal equality, so database scale such
+as trailing zeros does not hide an ambiguous event.
+
+The page hierarchy is status badges, direct answer, relevant breakdown, one material
+coverage note, one review note, concise evidence summary, optional details and
+feedback. Raw coverage JSON, long transaction lists and the original verbose answer
+are collapsed by default. Generic tax prose is not repeated in unrelated main
+answers; tax-mode cards retain the explicit deductibility boundary. The unchanged
+validated answer and backend limitations remain inspectable in the details.
+
+Optional details include identifier-redacted transactions, documents, reconciliation,
+bank aggregates, sale/comparison facts, coverage and backend warnings. Exact private
+source IDs and evidence handles remain in private provenance, not ordinary UI text.
+These projections preserve all retrieved rows; they are not new database queries
+or a claim that unavailable documents do not exist.
+
+Offline replay of the four retained pilot plans and final references passed after
+read-only evidence retrieval. Main-presentation sizes were 53, 47, 73 and 128 words
+respectively; all 8, 9, 7 and 8 required handles remained validated. The review case
+retained all 95 rows with ten previewed. Income and expenses matched the reviewed
+aggregates and disclosed 174 unknown-context exclusions. The payment case led with
+two debit candidates and one credit/refund candidate, without asserting the exact
+reversal. No model calls or benchmark reruns were used for this presentation work.
+
+Presentation verification completed with **901 tests passed**, including 27 new
+presentation tests and all 874 existing tests. Ruff, formatting, dependency-lock,
+Alembic and diff checks passed. The repository privacy scan checked 262 files with
+zero findings and the private denylist loaded. All 14 source-table fingerprints,
+the accepted engine/configuration/snapshot and holdout/manifest hashes remained
+unchanged. The historical integrity check retained the two previously documented
+repository-hygiene exceptions; this task introduced no new historical differences.
+The four replay cases and browser-script checks passed without a live model call.
+The human-supervised read-only pilot can resume after restarting the local server
+to load the presentation changes; this does not authorize a benchmark rerun.
+
+Named-subject pilot questions now have a separate read-only identity lookup after accepted
+validation and before source postflight. See [the named-subject repair report](pilot_named_subject_retrieval.md)
+for the observed failure, matching contract, scope, local results and verification. This
+additive pilot lookup does not change the accepted agent, benchmark or evidence requirements.
+
+The subsequent [shared subject identity repair](pilot_subject_identity_consistency.md)
+consolidates extraction and matching across evidence, payment, tax, document and
+reconciliation paths, including Elenia and the inspected K-Rauta store descriptor.
+It supersedes the first repair's narrow sentence-pattern extraction and parallel
+presentation matcher; the accepted validation and source-integrity gates remain in place.
+
+See [fallback classification and narrowing](pilot_fallback_classification.md) for the distinction between service outages, unsupported scope, invalid planning and incomplete retrieval.
+
+See [intent and presentation routing](pilot_intent_routing.md) for named-subject eligibility and broad/coverage/review routing.
+
+See [generic bank transaction search](pilot_transaction_search.md) for bounded ad-hoc text queries and explicit multilingual search terms.
