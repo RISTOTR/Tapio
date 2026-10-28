@@ -10,6 +10,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from apps.api.app.domain.models import Document
+from tapio.confirmation.replay import replay_confirmations
 from tapio.knowledge.backfill import (
     accepted_contract_events,
     accrue,
@@ -46,6 +47,7 @@ def main():
         "invoices",
         "transaction_invoice_allocations",
         "transaction_reversal_candidates",
+        "confirmation_revisions",
     )
     with readonly_session(engine) as db:
         for name in wanted:
@@ -66,6 +68,22 @@ def main():
         Path("data/interim/gmail/export_research/invoice_settlement_review.json"),
         observed_at=when,
     )
+    if tables["confirmation_revisions"]:
+        from tapio.pilot.subject_identity import resolve_subject
+
+        names = {
+            t["normalized_counterparty"]
+            for t in tables["transactions"]
+            if t.get("normalized_counterparty")
+        }
+        merchants = {
+            t["id"]: resolve_subject(t.get("normalized_counterparty") or "", names)[
+                "canonical_subject"
+            ]
+            or t.get("normalized_counterparty")
+            for t in tables["transactions"]
+        }
+        _, events = replay_confirmations(events, tables["confirmation_revisions"], merchants)
     snapshot = save_bundle(args.output, events)
     assert rebuild(list(reversed(events))) == snapshot
     assert rebuild(events + events) == snapshot

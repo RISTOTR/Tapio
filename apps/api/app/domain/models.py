@@ -288,3 +288,24 @@ class TransactionReversalCandidate(Base):
     credit_id: Mapped[UUID] = mapped_column(ForeignKey("transactions.id"), index=True)
     evidence: Mapped[dict[str, Any]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ConfirmationRevision(Base):
+    """Append-only field-level human decisions; legacy source/review rows stay immutable."""
+
+    __tablename__ = "confirmation_revisions"
+    __table_args__ = (
+        UniqueConstraint("transaction_id", "sequence", name="uq_confirmation_sequence"),
+        CheckConstraint("action IN ('CONFIRM','CHANGE')", name="confirmation_action"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    transaction_id: Mapped[UUID] = mapped_column(ForeignKey("transactions.id"), index=True)
+    sequence: Mapped[int] = mapped_column()
+    previous_id: Mapped[UUID | None] = mapped_column(ForeignKey("confirmation_revisions.id"))
+    idempotency_key: Mapped[str] = mapped_column(unique=True)
+    action: Mapped[str] = mapped_column()
+    fields: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    state: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    audit: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    knowledge_event: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -11,11 +11,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from tapio.confirmation.api import router as confirmation_router
 from tapio.pilot.config import require_mode
 from tapio.pilot.contracts import Ask, Feedback, PilotResponse
 from tapio.pilot.diagnostics import exception_detail
 from tapio.pilot.health import DATABASE_HELP, database_available
 from tapio.pilot.service import Pilot
+from tapio.suggestions.models import FeedbackInput
 
 app = FastAPI(title="Tapio read-only pilot", docs_url=None, redoc_url=None)
 app.add_middleware(
@@ -103,3 +105,62 @@ def health():
             {"status": "DATABASE_UNAVAILABLE", "detail": DATABASE_HELP}, status_code=503
         )
     return {"status": "READY", "detail": "Local database is available."}
+
+
+# Fixed-batch evaluation only: no source mutation or knowledge-promotion router.
+def get_suggestion_store():
+    from tapio.pilot.config import load_config, readonly_engine, source_fingerprints
+    from tapio.suggestions.store import Store
+
+    store = Store(Path("data/interim/suggestion_pilot"))
+    batch, _ = store.batch()
+    config, _ = load_config()
+    engine = readonly_engine()
+    try:
+        if source_fingerprints(engine, config) != batch["provenance"]["source_fingerprints"]:
+            raise ValueError("SUGGESTION_SOURCE_SNAPSHOT_CHANGED")
+    finally:
+        engine.dispose()
+    return store
+
+
+@app.get("/pilot/suggestions", response_class=HTMLResponse)
+def suggestion_page():
+    return Path("tapio/suggestions/page.html").read_text()
+
+
+@app.get("/pilot/suggestions/cards")
+def suggestion_cards():
+    try:
+        return get_suggestion_store().public_batch()
+    except Exception:
+        raise HTTPException(503, "Verified suggestion batch unavailable.") from None
+
+
+@app.get("/pilot/suggestions/metrics")
+def suggestion_metrics():
+    try:
+        return get_suggestion_store().metrics()
+    except Exception:
+        raise HTTPException(503, "Suggestion metrics unavailable.") from None
+
+
+@app.post("/pilot/suggestions/cards/{card_id}/feedback")
+def suggestion_feedback(card_id: str, body: FeedbackInput):
+    try:
+        get_suggestion_store().feedback(card_id, body)
+    except KeyError:
+        raise HTTPException(404, "Unknown suggestion card.") from None
+    except Exception:
+        raise HTTPException(503, "Suggestion feedback store unavailable.") from None
+    return {
+        "saved": True,
+        "source_data_changed": False,
+        "labels_changed": False,
+        "knowledge_authority_changed": False,
+    }
+
+
+# Narrow, separately gated human confirmation; no generic mutation router.
+
+app.include_router(confirmation_router)

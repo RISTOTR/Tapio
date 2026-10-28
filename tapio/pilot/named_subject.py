@@ -7,6 +7,8 @@ from sqlalchemy import func, or_, select
 
 from apps.api.app.domain.models import Document, Invoice, Transaction, TransactionLabelReview
 from apps.api.app.services.tool_queries import Queries
+from tapio.confirmation.projection import current_revisions, projected_review
+from tapio.knowledge.fields import IDENTITY_PATHS, source_text_fields
 from tapio.pilot.subject_identity import extract_subject, resolve_subject, subject_intent
 from tapio.tools.schemas import TransactionSummary
 
@@ -30,7 +32,7 @@ def retrieve_subject(question, session_factory):
     if request is None:
         return None
     t, r = Transaction, TransactionLabelReview
-    fields = [t.normalized_counterparty, t.ultimate_recipient, t.payment_intermediary]
+    fields = [getattr(t, path) for path in IDENTITY_PATHS]
     with session_factory() as db:
         names = set()
         for field in [*fields, Invoice.vendor, Document.document_metadata["vendor"].astext]:
@@ -83,12 +85,16 @@ def retrieve_subject(question, session_factory):
                 )
             return query
 
-        query = select(t, r).outerjoin(
-            r, (r.transaction_id == t.id) & (r.review_status == "REVIEWED")
-        )
+        query = select(t, r).outerjoin(r, r.transaction_id == t.id)
         query = dated(query.where(or_(*(f.in_(names) for f in fields))), t.booking_date)
         result["trace"]["bank_query_invoked"] = True
         rows = bounded(db.execute(query.order_by(t.booking_date, t.id).limit(LIMIT + 1)).all())
+        revisions = current_revisions(db)
+        rows = [(row, projected_review(row, review, revisions)) for row, review in rows]
+        rows = [
+            (row, review if review and review.review_status == "REVIEWED" else None)
+            for row, review in rows
+        ]
         result["transactions"] = [
             TransactionSummary(
                 id=row.id,
@@ -102,6 +108,14 @@ def retrieve_subject(question, session_factory):
                 label_authority="HUMAN_REVIEWED" if review else "UNREVIEWED",
             ).model_dump(mode="json")
             for row, review in rows
+        ]
+        result["supporting_source_text"] = [
+            {
+                "transaction_id": str(row.id),
+                "fields": source_text_fields(row),
+                "role": "SUPPORTING_MESSAGE_NOT_IDENTITY",
+            }
+            for row, _ in rows
         ]
         # All matching rows have been retrieved; never total a truncated page or mix currencies.
         for currency in sorted({row.currency for row, _ in rows}):

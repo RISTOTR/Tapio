@@ -4,21 +4,11 @@ from io import StringIO
 
 import polars as pl
 
+from data_pipeline.ingest.bank_fields import BANK_FIELDS
+
 SOURCE_TYPE = "finnish_bank_archive_csv"
 PARSER_VERSION = "1.0.0"
-HEADERS = [
-    "Kirjauspäivä",
-    "Arvopäivä",
-    "Määrä EUROA",
-    "Laji",
-    "Selitys",
-    "Saaja/Maksaja",
-    "Saajan tilinumero",
-    "Saajan pankin BIC",
-    "Viite",
-    "Viesti",
-    "Arkistointitunnus",
-]
+HEADERS = list(BANK_FIELDS)
 
 
 class BankInputError(ValueError):

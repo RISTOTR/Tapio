@@ -1,0 +1,39 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Tapio suggestion review</title>
+<style>body{max-width:900px;margin:2em auto;padding:0 1em;font:16px system-ui;line-height:1.5}article{border:1px solid #bbb;border-radius:8px;padding:1.2em;margin:1.5em 0}h2{margin-top:0}.warning{border-left:3px solid #b17620;padding-left:1em}button,select{padding:.6em}textarea{display:block;width:100%;box-sizing:border-box;margin:.5em 0}summary{cursor:pointer}pre{white-space:pre-wrap}small{color:#555}.badge{font-weight:bold;color:#704c00}</style>
+<h1>Suggestion review</h1><p><a href="/pilot">Back to evidence questions</a></p>
+<p>These are suggestions, not confirmed labels. Your feedback evaluates usefulness only. It cannot change transactions, classifications, reconciliation or knowledge authority.</p>
+<p>No answer is selected for you. Review the evidence, choose feedback, optionally add a note, then save. You can leave any card unanswered.</p>
+<p id="status" role="status">Loading the fixed review batch…</p><div id="cards"></div>
+<details><summary>Usefulness feedback summary</summary><pre id="metrics"></pre></details>
+<script>
+const el=id=>document.getElementById(id);
+const node=(tag,text)=>{const n=document.createElement(tag);n.textContent=text;return n};
+function list(parent,values){const ul=document.createElement('ul');for(const v of values)ul.append(node('li',v));parent.append(ul)}
+async function metrics(){const r=await fetch('/pilot/suggestions/metrics');if(r.ok)el('metrics').textContent=JSON.stringify(await r.json(),null,2)}
+async function start(){try{
+ const response=await fetch('/pilot/suggestions/cards');if(!response.ok)throw Error('The verified suggestion batch is unavailable.');
+ const cards=await response.json();el('status').textContent=`${cards.length} read-only cards. Suggestions are always SUGGESTED.`;
+ cards.forEach((c,index)=>{
+  const a=document.createElement('article');a.append(node('h2',`${index+1}. ${c.transaction.merchant}`));
+  a.append(node('p',`${c.transaction.date} · ${c.transaction.amount} ${c.transaction.currency}`));
+  if(c.transaction.description)a.append(node('p',c.transaction.description));
+  a.append(node('p',`Current: ${c.current_state.category||'unresolved'} / ${c.current_state.context||'unresolved'} · ${c.current_state.review_status}`));
+  a.append(node('p',`Suggested: ${c.suggestion.category||'no category suggestion'} / ${c.suggestion.context||'no context suggestion'} · SUGGESTED`));
+  a.append(node('small',`Review priority: ${c.priority} — usefulness of reviewing, not confidence.`));
+  a.append(node('h3','Why'));list(a,c.reasons.map(r=>`${r.code}: ${r.explanation}`));
+  const details=document.createElement('details');details.append(node('summary','Supporting evidence and authority'));list(details,c.evidence.map(e=>`${e.authority}: ${e.summary}`));a.append(details);
+  const warnings=document.createElement('div');warnings.className='warning';list(warnings,c.warnings);a.append(warnings);
+  const form=document.createElement('form'),select=document.createElement('select');select.required=true;select.setAttribute('aria-label',`Feedback for card ${index+1}`);
+  const blank=node('option','Choose feedback…');blank.value='';select.append(blank);
+  for(const choice of ['CORRECT','PARTIALLY_USEFUL','WRONG','INSUFFICIENT_EVIDENCE','SKIP']){const option=node('option',choice);option.value=choice;select.append(option)}
+  const note=document.createElement('textarea');note.maxLength=1000;note.rows=2;note.setAttribute('aria-label','Optional evaluation note');note.placeholder='Optional evaluation note (no label changes)';
+  const button=node('button','Save evaluation feedback');button.type='submit';
+  const message=node('p',c.feedback?`Previously saved feedback: ${c.feedback}`:'No feedback saved.');message.setAttribute('role','status');
+  form.append(select,note,button,message);form.addEventListener('submit',async event=>{event.preventDefault();if(!select.value)return;button.disabled=true;try{
+   const r=await fetch(`/pilot/suggestions/cards/${c.card_id}/feedback`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choice:select.value,note:note.value})});
+   if(!r.ok)throw Error('Feedback could not be saved.');message.textContent='Evaluation feedback saved. Labels and source data are unchanged.';await metrics();
+  }catch(error){message.textContent=error.message}finally{button.disabled=false}});a.append(form);el('cards').append(a);
+ });await metrics();
+}catch(error){el('status').textContent=error.message}}
+start();
+</script></html>

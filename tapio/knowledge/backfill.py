@@ -5,7 +5,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from tapio.knowledge.fields import SOURCE_FIELDS
+from data_pipeline.ingest.bank_fields import BANK_FIELDS
+from tapio.knowledge.fields import SOURCE_FIELDS, source_text_fields
 from tapio.knowledge.models import (
     Authority,
     Claim,
@@ -105,14 +106,23 @@ def accrue(tables: dict, *, observed_at: datetime) -> list[KnowledgeEvent]:
                     "raw_counterparty/normalized_counterparty",
                     authority=Authority.SUGGESTED,
                 )
-        for field in (
-            "message",
-            "normalized_counterparty",
-            "ultimate_recipient",
-            "payment_intermediary",
-        ):
-            text = t.get(field)
-            if text and len(text) <= 120:
+        for field, text in source_text_fields(t).items():
+            source_name = field.removeprefix("raw_source.")
+            spec = BANK_FIELDS.get(source_name)
+            if spec and not spec.vocabulary:
+                continue
+            if not text or not text.strip():
+                continue
+            if field.startswith("raw_source."):
+                add(
+                    Kind.DOCUMENT_FACT,
+                    t["id"],
+                    "observed_source_text",
+                    {"field": field, "text": text},
+                    t,
+                    field,
+                )
+            if len(text) <= 120:
                 add(
                     Kind.VOCABULARY,
                     normalize_text(text),
@@ -120,40 +130,23 @@ def accrue(tables: dict, *, observed_at: datetime) -> list[KnowledgeEvent]:
                     {
                         "term": text,
                         "normalized": normalize_text(text),
-                        "language": "und",
+                        "language": "fi" if field == "raw_source.Selitys" else "und",
                         "concept": None,
                     },
                     t,
                     field,
                 )
-        raw = t.get("raw_source") or {}
-        if isinstance(raw, dict):
-            for key, value in raw.items():
-                field = "raw_source." + key
-                if field not in SOURCE_FIELDS:
-                    add(
-                        Kind.SOURCE_FIELD_MEANING,
-                        field,
-                        "field_definition",
-                        {"searchable": False, "meaning": None},
-                        t,
-                        field,
-                        authority=Authority.UNKNOWN,
-                    )
-                if key == "Selitys" and isinstance(value, str) and value.strip():
-                    add(
-                        Kind.VOCABULARY,
-                        normalize_text(value),
-                        "observed_term",
-                        {
-                            "term": value,
-                            "normalized": normalize_text(value),
-                            "language": "fi",
-                            "concept": None,
-                        },
-                        t,
-                        field,
-                    )
+        for key in t.get("raw_source") or {}:
+            if key not in BANK_FIELDS:
+                add(
+                    Kind.SOURCE_FIELD_MEANING,
+                    "raw_source." + key,
+                    "field_definition",
+                    {"searchable": False, "meaning": None},
+                    t,
+                    "raw_source." + key,
+                    authority=Authority.UNKNOWN,
+                )
     # Registry claims describe existing reviewed software mappings, not new guesses.
     registry_source = {
         "id": "tapio/pilot/subject_identity.py",
@@ -233,6 +226,27 @@ def accrue(tables: dict, *, observed_at: datetime) -> list[KnowledgeEvent]:
             fields_source,
             "SOURCE_FIELDS." + name,
             source="reviewed_search_field_registry",
+            single=True,
+        )
+    for name, spec in BANK_FIELDS.items():
+        add(
+            Kind.SOURCE_FIELD_MEANING,
+            "raw_source." + name,
+            "csv_field_contract",
+            {
+                "classification": spec.classification,
+                "stored": spec.stored,
+                "meaning": spec.meaning,
+                "searchable": spec.searchable,
+                "reconciliation": spec.reconciliation,
+                "exclusion": spec.exclusion,
+            },
+            {
+                "id": "data_pipeline/ingest/bank_fields.py",
+                "sha256": file_hash("data_pipeline/ingest/bank_fields.py"),
+            },
+            "BANK_FIELDS." + name,
+            source="importer_schema_registry",
             single=True,
         )
     catalog = {"id": "tapio/pilot/concepts.py", "sha256": file_hash("tapio/pilot/concepts.py")}

@@ -10,7 +10,8 @@ from pydantic import Field, model_validator
 from sqlalchemy import select
 
 from apps.api.app.domain.models import Transaction, TransactionLabelReview
-from tapio.knowledge.fields import SOURCE_FIELDS, source_text_fields
+from tapio.confirmation.projection import current_revisions, projected_review
+from tapio.knowledge.fields import SOURCE_FIELDS, field_provenance, source_text_fields
 from tapio.pilot.contracts import Coverage, Evidence, PilotResponse
 from tapio.pilot.subject_identity import generic_subject
 from tapio.tools.schemas import Schema
@@ -161,7 +162,9 @@ def retrieve_search(plan, session_factory, *, hide_labels=False):
     items, scanned = [], 0
     first = last = None
     with session_factory() as db:
+        revisions = current_revisions(db) if not hide_labels else {}
         for tx, review in db.execute(query.execution_options(yield_per=500)):
+            review = projected_review(tx, review, revisions)
             scanned += 1
             if scanned > MAX_SCANNED:
                 raise ValueError("TRANSACTION_SEARCH_LIMIT")
@@ -198,7 +201,24 @@ def retrieve_search(plan, session_factory, *, hide_labels=False):
                     else "UNREVIEWED",
                     "category": review.confirmed_category if confirmed else None,
                     "business_context": review.confirmed_business_context if confirmed else None,
+                    "field_authority": getattr(
+                        review,
+                        "field_authority",
+                        {
+                            "category": "HUMAN_CONFIRMED" if confirmed else "UNKNOWN",
+                            "context": "HUMAN_CONFIRMED" if confirmed else "UNKNOWN",
+                        },
+                    ),
                     "matched_terms": matches,
+                    "match_provenance": [
+                        {
+                            "matched_term": m["term"],
+                            "normalized_term": normalize_text(m["term"]),
+                            **field_provenance(field),
+                        }
+                        for m in matches
+                        for field in m["fields"]
+                    ],
                 }
             )
     return {

@@ -1,0 +1,42 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Tapio human review</title>
+<style>body{font:16px system-ui;max-width:950px;margin:2rem auto;padding:1rem}article{border:1px solid #aaa;padding:1rem;margin:1rem 0}label{display:block;margin:.7rem 0}button,select{padding:.5rem}pre{white-space:pre-wrap}textarea{width:95%}.state{font-weight:bold}details{margin:.8rem 0}</style>
+<h1 id="heading">Controlled human review</h1><a href="/pilot">Back</a>
+<p id="batch"></p><p id="progress"></p>
+<p>Only the transactions in this frozen batch can be reviewed. Suggestions remain SUGGESTED until your explicit final click. Category and context are independent. Tax treatment remains a separate human decision.</p>
+<p id="status" role="status">Loading…</p><div id="cards"></div>
+<script>
+const el=id=>document.getElementById(id), make=(tag,text)=>{const n=document.createElement(tag);n.textContent=text;return n};
+let csrf='';
+async function post(path,body){const r=await fetch('/pilot/confirmation/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-Tapio-CSRF':csrf},body:JSON.stringify(body)});const result=await r.json();if(!r.ok)throw Error(result.detail||'Request failed');return result}
+const categories=['ELECTRICITY','GRID_DISTRIBUTION','FORESTRY_SERVICE','TIMBER_INCOME','TAX','GROCERIES','FUEL','INSURANCE','MAINTENANCE','TRANSFER','SUBSCRIPTION','TRAVEL','OTHER','UNKNOWN'];
+(async()=>{try{
+const r=await fetch('/pilot/confirmation/cards');if(!r.ok)throw Error('Verified preview batch unavailable.');const data=await r.json();csrf=data.csrf;
+el('heading').textContent=data.batch_version==='GENERAL_CONFIRMATION_V1'?'SMALL GENERAL CONFIRMATION PILOT':'CONTROLLED HUMAN WRITE PILOT';
+el('batch').textContent='Batch: '+data.batch_id;
+el('status').textContent=data.writes_enabled?'Writes enabled only for this frozen batch. Every action requires a separate final click.':'READ_ONLY — confirmation writes are disabled.';
+const reviewed=new Set(data.cards.filter(c=>['CONFIRMED','CHANGED','SKIPPED'].includes(c.write_state)).map(c=>c.card_id));const progress=()=>el('progress').textContent=`Progress: ${reviewed.size} / ${data.cards.length} reviewed`;progress();
+for(const c of data.cards){
+const a=make('article',''),state=make('p',c.write_state);state.className='state';state.setAttribute('role','status');a.append(state,make('h2',c.transaction.merchant),make('p',`${c.transaction.date} · ${c.transaction.amount} ${c.transaction.currency}`));
+for(const [k,v] of Object.entries(c.source_messages))if(v)a.append(make('p',`${k}: ${v}`));
+if(c.paytrail_purpose)a.append(make('p','Paytrail purpose evidence: '+c.paytrail_purpose));
+const current=make('p',`CURRENT: category ${c.current_state.category||'unresolved'}; context ${c.current_state.context||'unresolved'}`);a.append(current);
+const supported=['category','context'].filter(f=>c.suggestion[f]);a.append(make('p',supported.length?`SUGGESTED: category ${c.suggestion.category||'no suggestion'}; context ${c.suggestion.context||'no suggestion'}`:'No supported suggestion is available.'));
+for(const reason of c.reasons)a.append(make('p',`${reason.code}: ${reason.explanation}`));for(const warning of c.warnings)a.append(make('p',warning));
+const detail=make('details','');detail.append(make('summary','Existing knowledge and document evidence'));
+const summaries=new Set();for(const evidence of c.evidence||[]){const text=`${evidence.authority}: ${evidence.summary}`;if(!summaries.has(text)){detail.append(make('p',text));summaries.add(text)}}
+for(const doc of c.document_evidence||[])detail.append(make('p',`${doc.status}: ${JSON.stringify(doc.document_summary||{})}; matching evidence: ${JSON.stringify(doc.evidence)}`));a.append(detail);
+const form=make('form',''),action=document.createElement('select');action.setAttribute('aria-label','Action');
+const option=(value,label)=>{const o=make('option',label);o.value=value;action.append(o)};option('','Choose an action');
+if(supported.includes('category'))option('CONFIRM_CATEGORY','CONFIRM SUGGESTED CATEGORY');if(supported.includes('context'))option('CONFIRM_CONTEXT','CONFIRM SUGGESTED CONTEXT');if(supported.length===2)option('CONFIRM_BOTH','CONFIRM BOTH');option('CHANGE','CHANGE — choose labels yourself');option('SKIP','SKIP — no classification');form.append(action);
+const controls={};for(const field of ['category','context']){const label=make('label',`Select ${field}: `),check=document.createElement('input');check.type='checkbox';const select=document.createElement('select');for(const v of field==='category'?categories:['PERSONAL','PROPERTY','FORESTRY','UNKNOWN']){const op=make('option',v);op.value=v;select.append(op)}select.value=c.suggestion[field]||'UNKNOWN';check.disabled=select.disabled=true;label.prepend(check);label.append(select);form.append(label);controls[field]={check,select}}
+const note=document.createElement('textarea');note.maxLength=500;note.placeholder='Reason (required for correcting a previous confirmation)';form.append(note);
+const preview=make('button','Preview — no write');preview.type='submit';const apply=make('button','Apply displayed changes');apply.type='button';apply.disabled=true;const output=make('pre',''),message=make('p','');message.setAttribute('role','status');let token=null;
+form.addEventListener('input',()=>{token=null;apply.disabled=true});
+action.onchange=()=>{for(const [f,v] of Object.entries(controls)){const chosen=action.value==='CONFIRM_BOTH'||action.value==='CONFIRM_'+f.toUpperCase();v.check.checked=chosen;v.check.disabled=action.value!=='CHANGE';v.select.disabled=action.value!=='CHANGE';if(chosen)v.select.value=c.suggestion[f]}};
+form.onsubmit=async e=>{e.preventDefault();token=null;apply.disabled=true;if(!action.value){message.textContent='Choose an action first.';return}const fields={};if(action.value!=='SKIP')for(const [key,v] of Object.entries(controls))if(v.check.checked)fields[key]=v.select.value;
+try{const p=await post('preview',{card_id:c.card_id,action:action.value.startsWith('CONFIRM')?'CONFIRM':action.value,fields,correction_reason:note.value});output.textContent=JSON.stringify({CURRENT:p.current,PROPOSED_USER_SELECTED:fields,WOULD_CHANGE:p.would_change,untouched_fields:p.untouched_fields},null,2);token=p.token;apply.disabled=!p.writes_enabled;apply.textContent=action.value==='SKIP'?'Record SKIP — no classification write':'Apply displayed changes';message.textContent='Preview only. Review the field-by-field changes, then use the final button.'}catch(e){message.textContent=e.message;if(e.message.includes('STALE'))state.textContent='STALE'}};
+apply.onclick=async()=>{if(!token)return;apply.disabled=true;try{const result=await post('commit',{token,explicit_click:'APPLY_DISPLAYED_CHANGES'});state.textContent=result.status==='SKIPPED'?'SKIPPED':action.value==='CHANGE'?'CHANGED':'CONFIRMED';message.textContent=result.status==='SKIPPED'?'Skipped. No classification changed.':'Saved. Source and unrelated reviews unchanged; audit and knowledge replay verified.';if(result.state)current.textContent=`CURRENT: category ${result.state.category||'unresolved'}; context ${result.state.context||'unresolved'}`;output.textContent=JSON.stringify({current:result.state,verification:result.verification},null,2);reviewed.add(c.card_id);progress();token=null}catch(e){message.textContent=e.message;if(e.message.includes('STALE'))state.textContent='STALE'}};
+form.append(preview,apply,output,message);a.append(form);el('cards').append(a)
+}
+}catch(e){el('status').textContent=e.message}})();
+</script></html>
