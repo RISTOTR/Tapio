@@ -64,7 +64,7 @@ class FullFieldGenerator(Generator):
             ]
             values = {i.claim.value for i in history}
             category = next(iter(values)) if len(values) == 1 and facts else None
-            if base.current_state.category not in (None, "UNKNOWN") or signals["ambiguous_links"]:
+            if base.current_state.category is not None or signals["ambiguous_links"]:
                 category = None
             suggestion = Suggestion(category=category, context=None)
             if category:

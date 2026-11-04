@@ -30,6 +30,7 @@ def check_scopes(scopes):
 
 def credentials(settings=None, authorize=False):
     import requests
+    from google.auth.exceptions import RefreshError
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
@@ -42,7 +43,12 @@ def credentials(settings=None, authorize=False):
             check_scopes(saved.get("scopes"))
             creds = Credentials.from_authorized_user_info(saved)
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                if not authorize:
+                    raise ToolFailure(ErrorCode.AUTHENTICATION_REQUIRED) from None
+                creds = None
         if not creds or not creds.valid:
             if not authorize or not settings.client_secret.is_file():
                 raise ToolFailure(ErrorCode.AUTHENTICATION_REQUIRED)

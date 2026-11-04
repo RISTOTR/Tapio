@@ -56,7 +56,15 @@ class ControlledPilot:
     def preflight(self):
         if (self.root / "blocked.json").exists():
             raise ValueError("CONTROLLED_PILOT_VERIFICATION_REQUIRED")
-        self.verify_sources()
+        try:
+            self.verify_sources()
+        except ValueError as exc:
+            if self.service.batch.get("version") in {
+                "BOUNDED_CONFIRMATION_V1",
+                "PERSISTENT_CONFIRMATION_V1",
+            }:
+                raise ValueError("STALE_STATE_SOURCE_EVIDENCE_CHANGED") from exc
+            raise
 
     def verify_sources(self):
         from tapio.pilot.config import load_config, readonly_engine, source_fingerprints
@@ -107,7 +115,7 @@ class ControlledPilot:
             },
         }
 
-    def refresh(self):
+    def refresh(self, *, persist=True):
         from tapio.confirmation.service import review_state, row_data
 
         fingerprints = self.verify_sources()
@@ -115,10 +123,17 @@ class ControlledPilot:
         allowed = {c["transaction"]["id"]: c for c in cards.values()}
         with self.service.factory() as db:
             revisions = [row_data(r) for r in db.scalars(select(ConfirmationRevision))]
+            all_revisions = list(revisions)
+            rule_transactions = (
+                [row_data(t) for t in db.scalars(select(Transaction))]
+                if "rule_version" in self.service.batch
+                else []
+            )
             baseline = self.service.batch.get("baseline_revisions", {})
             actual = {r["id"]: digest(r) for r in revisions}
             if any(actual.get(rid) != h for rid, h in baseline.items()):
                 raise ValueError("HISTORICAL_REVISION_CHANGED")
+            replay_rows = [r for r in revisions if r["transaction_id"] in allowed]
             revisions = [r for r in revisions if r["id"] not in baseline]
             if any(r["transaction_id"] not in allowed for r in revisions):
                 raise ValueError("UNRELATED_CONFIRMATION_REVISION")
@@ -152,8 +167,9 @@ class ControlledPilot:
             )
         ]
         merchants = {tx: c["transaction"]["merchant"] for tx, c in allowed.items()}
-        snapshot, events = replay_confirmations(base_events, revisions, merchants)
-        assert save_bundle(self.root / "knowledge", events) == snapshot
+        snapshot, events = replay_confirmations(base_events, replay_rows, merchants)
+        if persist:
+            assert save_bundle(self.root / "knowledge", events) == snapshot
         old_ids, new_ids = {i.id for i in base.items}, {i.id for i in snapshot.items}
         counts = Counter(r["action"] for r in revisions)
         skips = {a["card_id"] for a in self.attempts() if a["action"] == "SKIP"}
@@ -196,7 +212,62 @@ class ControlledPilot:
         if self.service.batch.get("version") == "GENERAL_CONFIRMATION_V1":
             report.update(general_metrics(cards, revisions, skips))
             report["recommendation"] = "KEEP_SMALL_BATCH_ONLY"
-        self.write("report.json", report)
+        if self.service.batch.get("version") in {
+            "BOUNDED_CONFIRMATION_V1",
+            "PERSISTENT_CONFIRMATION_V1",
+        }:
+            from tapio.confirmation.outcomes import outcome_metrics
+
+            report.update(outcome_metrics(cards, revisions, skips))
+            semantic = {cid for cid, c in cards.items() if c.get("semantic_category_used")}
+            report["generalization_metrics"] = {
+                "semantic_suggestions": len(semantic),
+                "recipient_concept_suggestions": sum(
+                    cid in semantic and bool(c.get("paytrail_purpose")) for cid, c in cards.items()
+                ),
+                "unseen_merchant_suggestions": sum(
+                    cid in semantic and c.get("unseen_exact_identity", False)
+                    for cid, c in cards.items()
+                ),
+                "exact_history_suggestions": sum(
+                    bool(c["suggestion"].get("category"))
+                    and any(r["code"] == "MERCHANT_PREVIOUSLY_REVIEWED" for r in c["reasons"])
+                    for c in cards.values()
+                ),
+                "abstentions_reduced": sum(
+                    c.get("semantic_category_added", False) for c in cards.values()
+                ),
+                "context_blocks": sum(
+                    bool(c.get("blocked_generalizations")) for c in cards.values()
+                ),
+                "semantic_suggestions_accepted": sum(
+                    r["audit"]["card_id"] in semantic
+                    and r["audit"].get("field_outcomes", {}).get("category")
+                    == "SUGGESTION_ACCEPTED"
+                    for r in revisions
+                ),
+                "semantic_suggestions_changed": sum(
+                    r["audit"]["card_id"] in semantic
+                    and r["audit"].get("field_outcomes", {}).get("category") == "SUGGESTION_CHANGED"
+                    for r in revisions
+                ),
+                "semantic_suggestions_skipped": len(semantic & skips),
+                "rejection_limit": (
+                    "SKIP is not a rejected suggestion; explicit concept rejection is separate."
+                ),
+            }
+            report["recommendation"] = "KEEP_FROZEN_BATCH_ONLY"
+        if "rule_version" in self.service.batch:
+            from tapio.confirmation.persistent import PersistentQueue
+            from tapio.confirmation.rule_metrics import metrics
+
+            queue = PersistentQueue(self.service.factory, self.root.parent.parent)
+            report["user_rule_metrics"] = metrics(queue, all_revisions, rule_transactions)
+            report["user_rule_metrics"]["cards_with_rule_matches"] = sum(
+                bool(c.get("user_rules")) for c in cards.values()
+            )
+        if persist:
+            self.write("report.json", report)
         return report
 
 

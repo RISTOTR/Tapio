@@ -65,11 +65,11 @@ class Card(Typed):
             raise ValueError("KNOWLEDGE_WITHOUT_PROVENANCE")
         c = self.current_state
         if c.review_status == "REVIEWED":
-            if c.category not in (None, "UNKNOWN") and self.suggestion.category is not None:
+            if c.category is not None and self.suggestion.category is not None:
                 raise ValueError("CONFIRMED_CATEGORY_IS_AUTHORITATIVE")
-            if c.context not in (None, "UNKNOWN") and self.suggestion.context is not None:
+            if c.context is not None and self.suggestion.context is not None:
                 raise ValueError("CONFIRMED_CONTEXT_IS_AUTHORITATIVE")
-            if c.category not in (None, "UNKNOWN") and c.context not in (None, "UNKNOWN"):
+            if c.category is not None and c.context is not None:
                 raise ValueError("FULLY_REVIEWED_TRANSACTION_INELIGIBLE")
         return self
 

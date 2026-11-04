@@ -212,6 +212,7 @@ def test_browser_requires_session_origin_and_csrf(setup, monkeypatch):
     client = TestClient(app)
     data = client.get("/pilot/confirmation/cards").json()
     payload = selection(c).model_dump()
+    payload["review_version"] = data["cards"][0]["authoritative"]["review_version"]
     assert client.post("/pilot/confirmation/preview", json=payload).status_code == 403
     headers = {"origin": "http://testserver", "X-Tapio-CSRF": data["csrf"]}
     p = client.post("/pilot/confirmation/preview", json=payload, headers=headers)

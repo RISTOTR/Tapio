@@ -92,7 +92,7 @@ def test_independent_context_with_conflicting_category():
 
 
 def test_partial_human_review_preserved():
-    c = card(generator(reviews=[review(1), review(2, "FUEL", "UNKNOWN")]))
+    c = card(generator(reviews=[review(1), review(2, "FUEL", None)]))
     assert c.current_state.category == "FUEL" and c.suggestion.category is None
     assert c.suggestion.context == "PERSONAL"
     d = c.model_dump()

@@ -26,10 +26,7 @@ def eligible(tx, reviews):
     return (
         not r
         or r["review_status"] != "REVIEWED"
-        or any(
-            r.get(k) in (None, "UNKNOWN")
-            for k in ("confirmed_category", "confirmed_business_context")
-        )
+        or any(r.get(k) is None for k in ("confirmed_category", "confirmed_business_context"))
     )
 
 
@@ -373,9 +370,9 @@ class Generator:
             )
         category = next(iter(s["categories"])) if len(s["categories"]) == 1 else None
         context = next(iter(s["contexts"])) if len(s["contexts"]) == 1 and not s["multi"] else None
-        if current.category not in (None, "UNKNOWN"):
+        if confirmed and current.category is not None:
             category = None
-        if current.context not in (None, "UNKNOWN"):
+        if confirmed and current.context is not None:
             context = None
         if s["ambiguous_links"]:
             category = context = None

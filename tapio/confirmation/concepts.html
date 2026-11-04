@@ -1,0 +1,36 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Tapio concept review</title>
+<style>body{font:16px system-ui;max-width:900px;margin:2rem auto;padding:1rem}article{border:1px solid #aaa;padding:1rem;margin:1rem 0}button,select{padding:.5rem;margin:.5rem}pre{white-space:pre-wrap}</style>
+<h1>Semantic concept candidates</h1><a href="/pilot/confirmation/mappings">Category mapping candidates</a> · <a href="/pilot/confirmation/rules">User rule candidates</a> · <a href="/pilot/confirmation">Transaction queue</a>
+<p>Approving a semantic fact does not approve a category mapping or classify transactions. Category mappings require separate supporting observations. No context or tax rule is created. Changed concepts apply only to a newly frozen transaction window.</p>
+<p id="status" role="status"></p><button id="refresh">Refresh persisted state</button><div id="cards"></div>
+<script>
+const node=(tag,text)=>{const e=document.createElement(tag);e.textContent=text;return e};
+let data;
+async function post(path,body){const r=await fetch('/pilot/confirmation/concepts/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-Tapio-CSRF':data.csrf},body:JSON.stringify(body)});const v=await r.json();if(!r.ok)throw Error(v.detail);return v}
+function render(c){
+ const a=node('article','');a.dataset.candidateId=c.id;
+ a.append(node('h2',c.term+' → '+c.concept));
+ const status=node('p','Current persisted decision: '+c.decision);status.dataset.role='decision';
+ a.append(status,node('p','Authority: '+c.authority),node('p','Active semantic fact: '+(c.active?'YES':'NO')),node('p','Eligible for category suggestions: '+(c.active_for_suggestions?'YES':'NO')+' (current evidence is rechecked when freezing a window)'),node('p','Last decision: '+(c.timestamp||'None')),
+ node('p','Category effect requires a separate supported mapping; semantic confirmation alone is insufficient.'),node('p','Observed labels: '+JSON.stringify(c.observed_labels)));
+ a.append(node('pre','Impact and risk: '+JSON.stringify({impact:c.impact,risk:c.risk,limitations:c.limitations},null,2)));
+ const details=node('details','');details.append(node('summary','Supporting observations'));
+ for(const s of c.support)details.append(node('p',s.identity+' · '+s.category+' / '+s.context+' · review '+s.review_id));a.append(details);
+ const revise=node('button','REVISE DECISION'),action=node('select',''),concept=node('select',''),preview=node('button','Preview decision'),apply=node('button','Apply displayed concept decision'),out=node('pre','');out.setAttribute('role','status');
+ for(const x of ['','CONFIRM_CONCEPT','EDIT_CONCEPT','REJECT_CONCEPT','DEFER']){const o=node('option',x||'Choose action');o.value=x;action.append(o)}
+ for(const x of ['PHARMACY','CAFE','BAR','ALCOHOL_RETAILER','AIRLINE','TRAIN_OPERATOR','AIRPORT_FOOD_SERVICE','DEPARTMENT_STORE','HOME_GOODS','GOVERNMENT_AGENCY','GROCERY_RETAILER','RESTAURANT','VEHICLE_INSPECTION','VEHICLE_SERVICE','INSURANCE_COMPANY','BUS_OPERATOR','ELECTRICITY_SUPPLIER','HARDWARE_RETAILER','GENERAL_RETAILER','RECREATION_PERMIT']){const o=node('option',x);o.value=x;concept.append(o)}concept.value=c.concept;
+ let token=null,revising=false;const editable=c.decision==='PENDING';
+ const enable=()=>{for(const e of [action,concept,preview])e.disabled=!data.writes_enabled;apply.disabled=true};
+ for(const e of [action,concept,preview])e.disabled=!editable||!data.writes_enabled;
+ apply.disabled=true;revise.hidden=editable;revise.disabled=!data.writes_enabled;
+ revise.onclick=()=>{revising=true;enable();revise.disabled=true;out.textContent='Revision will append history. Select and preview a new decision.'};
+ for(const s of [action,concept])s.onchange=()=>{token=null;apply.disabled=true};
+ const fail=async(error)=>{out.textContent=error.message;token=null;apply.disabled=true;if(/STALE|session/i.test(error.message)){await load();document.getElementById('status').textContent=error.message+' — persisted state refreshed. Review again.'}};
+ preview.onclick=async()=>{preview.disabled=true;try{const p=await post('preview',{candidate_id:c.id,action:action.value,concept:concept.value,expected_state:c.state_version,revise:revising});out.textContent=JSON.stringify({selected:p.selected,effect:p.effect},null,2);token=p.token;apply.disabled=!data.writes_enabled}catch(e){await fail(e)}finally{preview.disabled=!data.writes_enabled}};
+ apply.onclick=async()=>{apply.disabled=true;preview.disabled=true;try{const result=await post('commit',{token,explicit_click:'APPLY_CONCEPT_DECISION'});const replacement=render(result.record);a.replaceWith(replacement);replacement.querySelector('pre').textContent=result.status+': '+result.record.term+' → '+result.record.concept+'\nDecision: '+result.record.decision+'\nActive semantic fact: '+(result.record.active?'YES':'NO');token=null}catch(e){await fail(e);preview.disabled=!data.writes_enabled}};
+ a.append(revise,action,concept,preview,apply,out);return a;
+}
+async function load(){try{const r=await fetch('/pilot/confirmation/concepts/cards',{cache:'no-store'});if(!r.ok)throw Error('Concept review unavailable');data=await r.json();document.getElementById('status').textContent=data.writes_enabled?'Explicit concept review enabled':'Read-only';document.getElementById('cards').replaceChildren(...data.records.map(render))}catch(e){document.getElementById('status').textContent=e.message}}
+document.getElementById('refresh').onclick=load;
+window.addEventListener('pageshow',load);
+</script></html>

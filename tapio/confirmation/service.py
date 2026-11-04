@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import time
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -18,7 +19,9 @@ from sqlalchemy import select
 from apps.api.app.domain.models import ConfirmationRevision, Transaction, TransactionLabelReview
 from data_pipeline.labels.contracts import CATEGORIES, CONTEXTS
 from data_pipeline.labels.merchant_policy import ambiguous_merchant
+from tapio.confirmation.outcomes import field_outcomes
 from tapio.knowledge.models import Claim, KnowledgeEvent, Provenance, Typed, canonical, digest
+from tapio.knowledge.user_rules import explicit_user_context
 from tapio.pilot.history import private_text
 
 
@@ -27,6 +30,9 @@ class Selection(Typed):
     action: Literal["CONFIRM", "CHANGE", "SKIP"]
     fields: dict[Literal["category", "context"], str] = Field(default_factory=dict)
     correction_reason: str = Field(default="", max_length=500)
+    review_version: str | None = None
+    touched_fields: tuple[Literal["category", "context"], ...] = ()
+    explicit_unknown_fields: tuple[Literal["category", "context"], ...] = ()
 
     @model_validator(mode="after")
     def valid(self):
@@ -64,8 +70,12 @@ def review_state(db, tx):
         "category": legacy.confirmed_category if confirmed else None,
         "context": legacy.confirmed_business_context if confirmed else None,
         "authority": {
-            "category": "HUMAN_CONFIRMED" if confirmed else "UNKNOWN",
-            "context": "HUMAN_CONFIRMED" if confirmed else "UNKNOWN",
+            "category": "HUMAN_CONFIRMED"
+            if confirmed and legacy.confirmed_category is not None
+            else "UNKNOWN",
+            "context": "HUMAN_CONFIRMED"
+            if confirmed and legacy.confirmed_business_context is not None
+            else "UNKNOWN",
         },
     }
     if latest:
@@ -85,8 +95,22 @@ def review_state(db, tx):
 
 class ConfirmationService:
     def __init__(self, session_factory, batch, *, signing_key=None, enabled=None):
-        general = batch.get("version") == "GENERAL_CONFIRMATION_V1"
-        if not ((15 <= len(batch["cards"]) <= 25) if general else (1 <= len(batch["cards"]) <= 5)):
+        minimal = batch.get("version") == "MINIMAL_REVIEW_V1"
+        persistent = minimal or batch.get("version") == "PERSISTENT_CONFIRMATION_V1"
+        bounded = persistent or batch.get("version") == "BOUNDED_CONFIRMATION_V1"
+        general = bounded or batch.get("version") == "GENERAL_CONFIRMATION_V1"
+        minimum, maximum = (
+            (1, 1000)
+            if minimal
+            else (1, 50)
+            if persistent
+            else (25, 50)
+            if bounded
+            else (15, 25)
+            if general
+            else (1, 5)
+        )
+        if not minimum <= len(batch["cards"]) <= maximum:
             raise ValueError("PREVIEW_BATCH_LIMIT")
         if digest(batch["cards"]) != batch["cards_hash"]:
             raise ValueError("PREVIEW_BATCH_HASH")
@@ -97,8 +121,25 @@ class ConfirmationService:
                 if (
                     not card.get("source_stable_id")
                     or abs(Decimal(card["transaction"]["amount"])) == Decimal("588.07")
-                    or any(card["current_state"][f] is not None for f in ("category", "context"))
-                    or (card.get("multi_context") and card["suggestion"]["context"] is not None)
+                    or (
+                        not bounded
+                        and any(
+                            card["current_state"][f] is not None for f in ("category", "context")
+                        )
+                    )
+                    or (
+                        bounded
+                        and all(
+                            card["current_state"].get("authority", {}).get(f) == "HUMAN_CONFIRMED"
+                            and card["current_state"].get(f) is not None
+                            for f in ("category", "context")
+                        )
+                    )
+                    or (
+                        card.get("multi_context")
+                        and card["suggestion"]["context"] is not None
+                        and not explicit_user_context(card)
+                    )
                     or (
                         card.get("paytrail_purpose") == "STILL_OPAQUE"
                         and any(card["suggestion"][f] for f in ("category", "context"))
@@ -116,6 +157,7 @@ class ConfirmationService:
         self.factory = session_factory
         self.batch = batch
         self.cards = {c["card_id"]: c for c in batch["cards"]}
+        self.card_versions = {cid: digest(c) for cid, c in self.cards.items()}
         if len(self.cards) != len(batch["cards"]):
             raise ValueError("DUPLICATE_CARD")
         self.key = signing_key or secrets.token_bytes(32)
@@ -126,9 +168,9 @@ class ConfirmationService:
     @classmethod
     def local(cls, factory):
         profile = os.getenv("TAPIO_CONFIRMATION_BATCH", "FIXED_FIVE")
-        if profile not in {"FIXED_FIVE", "GENERAL_V1"}:
+        if profile not in {"FIXED_FIVE", "GENERAL_V1", "BOUNDED_V1"}:
             raise ValueError("UNSUPPORTED_CONFIRMATION_BATCH")
-        general = profile == "GENERAL_V1"
+        general = profile in {"GENERAL_V1", "BOUNDED_V1"}
         root = Path(
             "data/interim/general_confirmation" if general else "data/interim/full_csv_confirmation"
         )
@@ -137,6 +179,8 @@ class ConfirmationService:
             if general
             else "data/interim/controlled_confirmation"
         )
+        if profile == "BOUNDED_V1":
+            root = monitor_root = Path("data/interim/bounded_confirmation")
         batch = json.loads((root / "preview.json").read_text())
 
         def enabled():
@@ -162,7 +206,38 @@ class ConfirmationService:
         from tapio.confirmation.controlled import ControlledPilot
 
         instance.monitor = ControlledPilot(instance, monitor_root, root)
+        if profile == "BOUNDED_V1":
+            from tapio.confirmation.receipt_support import receipt_fresh
+
+            instance.evidence_check = lambda card: receipt_fresh(card, root)
         return instance
+
+    def current_batch_revision(self, last):
+        return (
+            last is not None
+            and str(last.id) not in self.batch.get("baseline_revisions", {})
+            and last.audit.get("batch_id", "FIXED_FIVE") == self.batch.get("batch_id", "FIXED_FIVE")
+        )
+
+    def check_evidence(self, card):
+        if self.batch.get("version") in {
+            "BOUNDED_CONFIRMATION_V1",
+            "PERSISTENT_CONFIRMATION_V1",
+            "MINIMAL_REVIEW_V1",
+        } and digest(card) != self.card_versions.get(card["card_id"]):
+            raise ValueError("STALE_STATE_EVIDENCE_CHANGED")
+        check = getattr(self, "evidence_check", None)
+        if check and not check(card):
+            raise ValueError("STALE_STATE_RECEIPT_EVIDENCE_REFRESH_REQUIRED")
+
+    def current_review(self, card_id):
+        from tapio.confirmation.current import project
+
+        card = self.card(card_id)
+        with self.factory() as db:
+            tx = db.get(Transaction, UUID(card["transaction"]["id"]))
+            state, version, last = review_state(db, tx)
+            return project(card_id, str(tx.id), state, version, last)
 
     def card_status(self, card_id):
         c = self.card(card_id)
@@ -172,20 +247,26 @@ class ConfirmationService:
                 state, version, last = review_state(db, tx)
             except ValueError:
                 return {"write_state": "STALE", "current_state": c["current_state"]}
+            in_batch = self.current_batch_revision(last)
             stale = digest(row_data(tx)) != c["source_hash"] or (
-                not last and version != c["initial_state_hash"]
+                not in_batch and version != c["initial_state_hash"]
             )
+            try:
+                if not (in_batch and self.batch.get("version") == "PERSISTENT_CONFIRMATION_V1"):
+                    self.check_evidence(c)
+            except ValueError:
+                stale = True
             status = (
                 "STALE"
                 if stale
                 else (
                     ("CONFIRMED" if last.action == "CONFIRM" else "CHANGED")
-                    if last
+                    if in_batch
                     else ("READY_TO_CONFIRM" if self.enabled() else "READ_ONLY")
                 )
             )
         monitor = getattr(self, "monitor", None)
-        if not last and not stale and monitor and monitor.skipped(card_id):
+        if not in_batch and not stale and monitor and monitor.skipped(card_id):
             status = "SKIPPED"
         return {"write_state": status, "current_state": state}
 
@@ -222,11 +303,29 @@ class ConfirmationService:
     def preview(self, selection, browser_session):
         selection = Selection.model_validate(selection)
         c = self.card(selection.card_id)
+        self.check_evidence(c)
         with self.factory() as db:
             tx = db.get(Transaction, UUID(c["transaction"]["id"]))
             state, version, last = review_state(db, tx)
+            if selection.review_version is not None:
+                if selection.review_version != version:
+                    raise ValueError("STALE_STATE_REFRESH_REQUIRED")
+                for field, value in selection.fields.items():
+                    changed = value != state.get(field)
+                    if (
+                        changed
+                        and selection.action == "CHANGE"
+                        and field not in selection.touched_fields
+                    ):
+                        raise ValueError("UNCONFIRMED_UI_STATE_CHANGE")
+                    if (
+                        changed
+                        and value == "UNKNOWN"
+                        and field not in selection.explicit_unknown_fields
+                    ):
+                        raise ValueError("UNCONFIRMED_UI_STATE_CHANGE")
             # Initial cards must match; corrections require a fresh preview.
-            if not last and version != c["initial_state_hash"]:
+            if not self.current_batch_revision(last) and version != c["initial_state_hash"]:
                 raise ValueError("STALE_CARD_REFRESH_REQUIRED")
             if digest(row_data(tx)) != c["source_hash"]:
                 raise ValueError("SOURCE_CHANGED_REFRESH_REQUIRED")
@@ -235,7 +334,17 @@ class ConfirmationService:
             for f, v in selection.fields.items()
         ):
             raise ValueError("CONFIRM_REQUIRES_SHOWN_SUGGESTION")
-        if last and selection.fields and not selection.correction_reason.strip():
+        if (
+            (
+                self.current_batch_revision(last)
+                or any(
+                    state.get("authority", {}).get(f) == "HUMAN_CONFIRMED" and state[f] != v
+                    for f, v in selection.fields.items()
+                )
+            )
+            and selection.fields
+            and not selection.correction_reason.strip()
+        ):
             raise ValueError("CORRECTION_REASON_REQUIRED")
         payload = {
             "selection": selection.model_dump(),
@@ -265,6 +374,7 @@ class ConfirmationService:
             }
             if selection.fields
             else None,
+            "field_outcomes": field_outcomes(c["suggestion"], selection.fields, state),
             "audit_preview": {
                 "old_values": state,
                 "selected_values": selection.fields,
@@ -281,8 +391,8 @@ class ConfirmationService:
         # Serialize the bounded local workflow, including post-commit verification.
         if monitor:
             with monitor.lock:
-                monitor.preflight()
                 try:
+                    monitor.preflight()
                     result = self._commit(request, browser_session)
                 except ValueError as exc:
                     if "STALE" in str(exc):
@@ -295,18 +405,19 @@ class ConfirmationService:
                     raise ValueError("WRITE_RECORDED_VERIFICATION_PENDING_DO_NOT_REAPPLY") from None
         return self._commit(request, browser_session)
 
-    def _commit(self, request, browser_session):
+    def _commit(self, request, browser_session, *, transaction=None, group_audit=None):
         request = Commit.model_validate(request)
-        if not self.enabled():
-            raise ValueError("CONFIRMATION_WRITES_DISABLED")
         p = self.verify(request.token, browser_session)
         selected = Selection.model_validate(p["selection"])
         c = self.card(selected.card_id)
         if digest(c) != p["card_hash"]:
-            raise ValueError("CARD_CHANGED")
+            raise ValueError("STALE_STATE_CARD_CHANGED")
+        self.check_evidence(c)
+        if not self.enabled():
+            raise ValueError("CONFIRMATION_WRITES_DISABLED")
         if selected.action == "SKIP":
             return {"status": "SKIPPED", "classification_written": False}
-        with self.factory.begin() as db:
+        with nullcontext(transaction) if transaction is not None else self.factory.begin() as db:
             tx = db.scalar(
                 select(Transaction)
                 .where(Transaction.id == UUID(c["transaction"]["id"]))
@@ -340,6 +451,14 @@ class ConfirmationService:
                 "suggestion_snapshot": c["suggestion"],
                 "evidence_shown": c["evidence"],
                 "source_messages_shown": c["source_messages"],
+                "receipt_evidence_shown": c.get("receipt_evidence"),
+                "user_rules_shown": c.get("user_rules", []),
+                "semantic_concepts_shown": c.get("semantic_concepts", []),
+                "blocked_generalizations": c.get("blocked_generalizations", []),
+                "concept_version": self.batch.get("concept_version"),
+                "rule_version": self.batch.get("rule_version"),
+                "evidence_version": c.get("evidence_version"),
+                "field_outcomes": field_outcomes(c["suggestion"], selected.fields, state),
                 "batch_hash": self.batch["cards_hash"],
                 "batch_id": self.batch.get("batch_id", "FIXED_FIVE"),
                 "reason_codes": c["reasons"],
@@ -347,11 +466,16 @@ class ConfirmationService:
                 "knowledge_used": c["knowledge_used"],
                 "correction_reason": private_text(selected.correction_reason),
                 "previous_revision": str(last.id) if last else None,
+                "ui_review_version": selected.review_version,
+                "user_touched_fields": list(selected.touched_fields),
+                "explicit_unknown_fields": list(selected.explicit_unknown_fields),
                 "preview_hash": digest(p),
             }
             legacy = db.scalar(
                 select(TransactionLabelReview).where(TransactionLabelReview.transaction_id == tx.id)
             )
+            if group_audit is not None:
+                audit["group_confirmation"] = group_audit
             audit["legacy_review_hash"] = digest(row_data(legacy) if legacy else None)
             claims = []
             for field, value in selected.fields.items():
@@ -372,7 +496,8 @@ class ConfirmationService:
                             source_hash=digest(audit),
                             originating_field="fields." + field,
                             observed_at=now,
-                            extraction_method="explicit-human-confirmation-v1",
+                            extraction_method="explicit-human-confirmation-v2:"
+                            + audit["field_outcomes"][field],
                             confirmation_id=str(rid),
                         ),
                     )

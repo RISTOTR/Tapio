@@ -10,7 +10,7 @@ from tapio.knowledge.models import digest
 from tapio.suggestions.full_fields import FullFieldGenerator, message_recipient
 
 
-def prepare_candidates(tables, snapshot, observed_at, states):
+def prepare_candidates(tables, snapshot, observed_at, states, *, bounded=False):
     txs = tables["transactions"]
     reviews = {r["transaction_id"]: r for r in tables["transaction_label_reviews"]}
     confirmed = {r["transaction_id"] for r in tables.get("confirmation_revisions", [])}
@@ -23,8 +23,16 @@ def prepare_candidates(tables, snapshot, observed_at, states):
         review = reviews.get(tx["id"])
         if (
             not tx.get("source_transaction_id")
-            or tx["id"] in confirmed
-            or (review and review["review_status"] == "REVIEWED")
+            or (not bounded and tx["id"] in confirmed)
+            or (not bounded and review and review["review_status"] == "REVIEWED")
+            or (
+                bounded
+                and all(
+                    states[tx["id"]][0].get("authority", {}).get(f) == "HUMAN_CONFIRMED"
+                    and states[tx["id"]][0].get(f) is not None
+                    for f in ("category", "context")
+                )
+            )
             or abs(Decimal(tx["amount"])) == Decimal("588.07")
             or tx["id"] in reversal_ids
         ):
@@ -66,6 +74,10 @@ def prepare_candidates(tables, snapshot, observed_at, states):
                 purpose_class = "STILL_OPAQUE"
                 card["suggestion"]["category"] = None
             card["suggestion"]["context"] = None
+        if bounded:
+            for field in ("category", "context"):
+                if states[tx["id"]][0].get("authority", {}).get(field) == "HUMAN_CONFIRMED":
+                    card["suggestion"][field] = None
         tags = []
         category, context = (card["suggestion"][k] for k in ("category", "context"))
         tags.append(
@@ -125,12 +137,35 @@ def prepare_candidates(tables, snapshot, observed_at, states):
     return candidates
 
 
-def freeze_batch(candidates, knowledge_hash, source_fingerprints, baseline_revisions, size=20):
-    if not 15 <= size <= 25 or len(candidates) < size:
+def freeze_batch(
+    candidates,
+    knowledge_hash,
+    source_fingerprints,
+    baseline_revisions,
+    size=20,
+    *,
+    bounded=False,
+    created_at=None,
+):
+    minimum, maximum = (25, 50) if bounded else (15, 25)
+    if not minimum <= size <= maximum or len(candidates) < size:
         raise ValueError("INSUFFICIENT_BOUNDED_BATCH")
     chosen = []
     # Scarce document and partial-field cases first; overlap counts toward diversity.
-    for tag, count in [
+    for tag, count in (
+        [
+            ("HUMAN_CONFIRMED_UNKNOWN_HISTORY", 3),
+            ("USER_RULE_MATCH", 10),
+            ("ENTITY_VS_PURCHASE_PURPOSE", 3),
+            ("PENDING_SEMANTIC_CANDIDATE", 6),
+            ("SEMANTIC_GENERALIZATION", 6),
+            ("RECEIPT_MATCHED", 3),
+            ("MULTIPLE_RECEIPTS", 1),
+            ("NO_RECEIPT_FOUND", 2),
+        ]
+        if bounded
+        else []
+    ) + [
         ("DOCUMENT", 2),
         ("CONTEXT_ONLY", 2),
         ("AMBIGUOUS_RETAILER", 2),
@@ -157,7 +192,7 @@ def freeze_batch(candidates, knowledge_hash, source_fingerprints, baseline_revis
             chosen.append(card)
     chosen = deepcopy(chosen)
     batch = {
-        "version": "GENERAL_CONFIRMATION_V1",
+        "version": "BOUNDED_CONFIRMATION_V1" if bounded else "GENERAL_CONFIRMATION_V1",
         "cards": chosen,
         "cards_hash": digest(chosen),
         "knowledge_hash": knowledge_hash,
@@ -166,5 +201,9 @@ def freeze_batch(candidates, knowledge_hash, source_fingerprints, baseline_revis
         "available_composition": dict(Counter(t for c in candidates for t in c["pilot_tags"])),
         "composition": dict(Counter(t for c in chosen for t in c["pilot_tags"])),
     }
-    batch["batch_id"] = "GENERAL-" + digest(batch)[:16]
+    if bounded:
+        if created_at is None:
+            raise ValueError("BATCH_CREATION_TIMESTAMP_REQUIRED")
+        batch["created_at"] = created_at.isoformat()
+    batch["batch_id"] = ("BOUNDED-" if bounded else "GENERAL-") + digest(batch)[:16]
     return batch
