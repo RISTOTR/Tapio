@@ -122,7 +122,7 @@ def repeated_unknown(rows):
     ]
 
 
-def apply_uncertainty(card, tx, rows, semantic_known=False):
+def apply_uncertainty(card, tx, rows, semantic_known=False, *, identity_key=None):
     result = deepcopy(card)
     state = result["current_state"]
     result["field_states"] = {f: field_state(state, f).value for f in ("category", "context")}
@@ -130,7 +130,7 @@ def apply_uncertainty(card, tx, rows, semantic_known=False):
         r
         for r in rows
         if r["identity_key"]
-        and r["identity_key"] == norm(identity(tx))
+        and r["identity_key"] == (identity_key if identity_key is not None else norm(identity(tx)))
         and r["transaction_id"] != tx["id"]
         and r["field_state"] == "HUMAN_CONFIRMED_UNKNOWN"
     ]

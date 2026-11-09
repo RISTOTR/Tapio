@@ -123,21 +123,37 @@ def entity_match(value, entity, aliases=()):
     }
 
 
-def rule_match(rule, tx):
+def rule_match(rule, tx, reuse=None):
     scope = rule.scope
     value = identity(tx)  # Processor identity never replaces the underlying recipient.
     if not value:
         return None
     if scope.type == "ENTITY_EXACT":
-        matched = normalize_subject(value) == normalize_subject(scope.entity)
+        matched = (
+            reuse.key(value) == reuse.key(scope.entity)
+            if reuse
+            else normalize_subject(value) == normalize_subject(scope.entity)
+        )
     elif scope.type == "ENTITY_FAMILY":
         matched = entity_match(value, scope.entity, scope.aliases)
+        if reuse:
+            matched = matched or any(
+                reuse.key(value) == reuse.key(n) for n in (scope.entity, *scope.aliases)
+            )
     elif scope.type in {"VOCABULARY", "USER_GLOBAL_TAXONOMY"}:
         if ambiguous_merchant(value):
             return None
         terms = [t for t in scope.terms if matches(t, "TOKEN", value)]
+        links = reuse.vocabulary(scope.concept, scope.terms, value) if reuse else []
         return (
-            {"identity": value, "matched_terms": terms, "concept": scope.concept} if terms else None
+            {
+                "identity": value,
+                "matched_terms": terms,
+                "concept": scope.concept,
+                "vocabulary_links": links,
+            }
+            if terms or links
+            else None
         )
     else:
         try:
@@ -159,12 +175,12 @@ def rule_match(rule, tx):
     return {"identity": value, "resolution": scope.type} if matched else None
 
 
-def apply_user_rules(card, tx, active):
+def apply_user_rules(card, tx, active, reuse=None):
     result = deepcopy(card)
     matched = []
     for item in active:
         rule = UserRule.model_validate(item["rule"])
-        evidence = rule_match(rule, tx)
+        evidence = rule_match(rule, tx, reuse)
         if evidence:
             matched.append(
                 {

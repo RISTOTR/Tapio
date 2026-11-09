@@ -175,7 +175,9 @@ def generate_candidates(tables, states):
     return candidates[:50]
 
 
-def apply_concepts(card, tx, candidates, decisions, *, exclude_identity=None, mappings=None):
+def apply_concepts(
+    card, tx, candidates, decisions, *, exclude_identity=None, mappings=None, reuse=None
+):
     card = deepcopy(card)
     mappings = derive_mappings(candidates) if mappings is None else mappings
     used, blocked = [], []
@@ -197,8 +199,21 @@ def apply_concepts(card, tx, candidates, decisions, *, exclude_identity=None, ma
         if len(names) == 1:
             target_identity = next(iter(names))
     for candidate in candidates:
-        if matches(candidate["term"], candidate["match_mode"], target_identity):
+        linked = reuse and reuse.vocabulary(
+            candidate["concept"], [candidate["term"]], target_identity
+        )
+        if matches(candidate["term"], candidate["match_mode"], target_identity) or linked:
             grouped[(candidate["term"], candidate["match_mode"])].append(candidate)
+    card["known_semantic_concepts"] = [
+        {
+            "candidate_id": c["id"],
+            "concept": decisions[c["id"]].get("concept", c["concept"]),
+            "confirmation_id": decisions[c["id"]]["id"],
+        }
+        for rows in grouped.values()
+        for c in rows
+        if decisions.get(c["id"], {}).get("action") in {"CONFIRM_CONCEPT", "EDIT_CONCEPT"}
+    ]
     for rows in grouped.values():
         confirmed = [
             (c, decisions.get(c["id"], {}))

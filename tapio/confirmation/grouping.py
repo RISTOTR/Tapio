@@ -3,10 +3,12 @@
 from collections import Counter, defaultdict
 from copy import deepcopy
 
+from integrations.gmail.receipts import norm
+from tapio.confirmation.receipt_support import purpose_category
 from tapio.knowledge.models import digest
 
 FIELDS = ("category", "context")
-DEFAULT_REVIEW_BUDGET = 10
+DEFAULT_REVIEW_BUDGET = 5
 
 
 def unresolved(card):
@@ -16,6 +18,42 @@ def unresolved(card):
         for f in FIELDS
         if state.get("authority", {}).get(f) != "HUMAN_CONFIRMED" or state.get(f) is None
     ]
+
+
+def novelty_audit(card):
+    """Explain recognition separately from eligibility to reuse a label proposal."""
+    a = card["review_analysis"]
+    prior = a["history"]
+    name = card.get("identity_resolution", {}).get("matched_identity", card["identity_key"])
+    alias = any(norm(r.get("identity", r["identity_key"])) != norm(name) for r in prior)
+    reason = (
+        "PROCESSOR_AMBIGUOUS"
+        if a["reason"] == "PROCESSOR_AMBIGUOUS"
+        else "CONFLICTING_HISTORY"
+        if a["conflicts"] or a["reason"] == "CONFLICTING_HISTORY"
+        else "FALSE_NOVEL_ALIAS"
+        if alias
+        else "FALSE_NOVEL_USER_RULE"
+        if card.get("user_rules")
+        else "FALSE_NOVEL_SEMANTIC_RULE"
+        if card.get("semantic_category_used")
+        else "KNOWN_ENTITY_NEW_PURPOSE"
+        if a["reason"] == "KNOWN_ENTITY_NEW_PURPOSE"
+        else "FALSE_NOVEL_EXACT_HISTORY"
+        if prior
+        else "TRUE_NOVEL"
+        if a["reason"] in {"GENUINELY_NOVEL", "REPEATED_IDENTICAL_PATTERN"}
+        else "INSUFFICIENT_EVIDENCE"
+    )
+    return {
+        "transaction_id": card["transaction"]["id"],
+        "class": a.get("novelty_transition", reason),
+        "recognition_reason": a["reason"],
+        "proposal": a["proposal"],
+        "prior_review_ids": sorted({r.get("review_id", "") for r in prior}),
+        "identity_resolution": card.get("identity_resolution"),
+        "purpose_review_required": bool(card.get("purpose_review_required")),
+    }
 
 
 def analyze(cards, history, budget=DEFAULT_REVIEW_BUDGET):
@@ -38,6 +76,15 @@ def analyze(cards, history, budget=DEFAULT_REVIEW_BUDGET):
             and len(values[f]) == 1
             and "UNKNOWN" not in values[f]
         }
+        if (
+            len(stable) == 2
+            and len(
+                {h["transaction_id"] for h in support["category"]}
+                & {h["transaction_id"] for h in support["context"]}
+            )
+            < 3
+        ):
+            stable.pop("context")
         conflicts = [f for f in FIELDS if len(values[f]) > 1 or "UNKNOWN" in values[f]]
         hard = bool(
             c.get("receipt_conflicts")
@@ -48,15 +95,28 @@ def analyze(cards, history, budget=DEFAULT_REVIEW_BUDGET):
             in {"MULTIPLE_RECEIPTS", "RECEIPT_CANDIDATE", "INSUFFICIENT_RECEIPT_EVIDENCE"}
         )
         warnings = " ".join(c.get("warnings", [])).upper()
-        hard = hard or "TAX" in warnings or "CONFLICT" in warnings
-        opaque = c.get("paytrail_purpose") == "STILL_OPAQUE" or not key
+        hard = hard or "TAX_AMBIGUITY" in warnings or "CONFLICT" in warnings
+        hard = hard or bool(c.get("tax_ambiguity") or c.get("document_conflicts"))
+        hard = hard or any("CONFLICT" in code for code in c.get("blocked_generalizations", []))
+        opaque = (
+            c.get("paytrail_purpose") == "STILL_OPAQUE"
+            or not key
+            or key in {"stripe", "mobilepay", "paytrail", "paytrail oyj"}
+        )
         rules = c.get("user_rules", [])
         semantic = c.get("semantic_concepts", []) if c.get("semantic_category_used") else []
+        known_semantic = c.get("known_semantic_concepts", []) or c.get("semantic_concepts", [])
+        known = bool(
+            prior
+            or rules
+            or known_semantic
+            or "HUMAN_CONFIRMED" in c["current_state"].get("authority", {}).values()
+        )
         proposal = {}
         basis = None
         reason = "INSUFFICIENT_EVIDENCE"
         if opaque:
-            reason = "PROCESSOR_AMBIGUOUS" if c.get("paytrail_purpose") else reason
+            reason = "PROCESSOR_AMBIGUOUS" if c.get("paytrail_purpose") or key else reason
         elif hard or "category" in conflicts:
             reason = "CONFLICTING_HISTORY" if conflicts else "INSUFFICIENT_EVIDENCE"
         else:
@@ -78,22 +138,35 @@ def analyze(cards, history, budget=DEFAULT_REVIEW_BUDGET):
             # Any transaction-specific competing suggestion splits the transaction out.
             if any(c["suggestion"].get(f) not in (None, v) for f, v in proposal.items()):
                 proposal = {}
-                reason = "CONFLICTING_HISTORY"
+                reason = "KNOWN_ENTITY_NEW_PURPOSE"
+            receipt = c.get("receipt_evidence", {})
+            if receipt.get("status") == "RECEIPT_MATCHED" and receipt.get("candidates"):
+                receipt_category = purpose_category(receipt["candidates"][0])
+                if receipt_category and proposal.get("category") not in (None, receipt_category):
+                    proposal = {}
+                    reason = "INSUFFICIENT_EVIDENCE"
             proposal = {
                 f: v for f, v in proposal.items() if v and v != "UNKNOWN" and f in unresolved(c)
             }
+            if c.get("purpose_review_required"):
+                proposal = {}
+                reason = "KNOWN_ENTITY_NEW_PURPOSE"
         if not proposal and reason == "INSUFFICIENT_EVIDENCE" and not hard and not opaque:
-            reason = "GENUINELY_NOVEL" if not prior else "INSUFFICIENT_EVIDENCE"
-            if repeats[key] > 1:
+            reason = "GENUINELY_NOVEL" if not known else "INSUFFICIENT_EVIDENCE"
+            if known_semantic and "PURCHASE_PURPOSE_SUPPORT_REQUIRED" in c.get(
+                "blocked_generalizations", []
+            ):
+                reason = "KNOWN_ENTITY_NEW_PURPOSE"
+            elif repeats[key] > 1 and not known:
                 reason = "REPEATED_IDENTICAL_PATTERN"
         components = {}
-        if not prior:
+        if not known:
             components["unseen_entity"] = 5
         if conflicts or hard:
             components["conflicting_evidence"] = 5
         if c.get("multi_context") or "context" in conflicts:
             components["context_boundary"] = 4
-        if c.get("paytrail_purpose") and not prior:
+        if c.get("paytrail_purpose") and not known:
             components["new_processor_recipient"] = 4
         if c.get("concept_candidates") and not semantic:
             components["new_semantic_concept"] = 3
@@ -115,9 +188,31 @@ def analyze(cards, history, budget=DEFAULT_REVIEW_BUDGET):
             "conflicts": conflicts,
             "history": prior,
             "basis": basis,
-            "why_review": "Explicit human confirmation required"
-            if proposal
-            else "Unresolved evidence or context requires individual judgment",
+            "known_entity": known,
+            "entity_status": "KNOWN_ENTITY" if known else "UNKNOWN_ENTITY",
+            "why_review": (
+                "Processor opacity: the actual recipient or purchase is not established."
+                if opaque
+                else "Conflicting prior human history or transaction evidence must be reconciled."
+                if conflicts or hard
+                else "Multi-context ambiguity: this entity is used in more than one context."
+                if c.get("multi_context")
+                else "New purchase purpose for a known entity needs transaction-specific evidence."
+                if reason == "KNOWN_ENTITY_NEW_PURPOSE"
+                else "Genuinely unseen entity/purpose: no supporting human decision exists."
+                if not known
+                else "Rule boundary case: " + ", ".join(c["blocked_generalizations"])
+                if c.get("blocked_generalizations") and not prior
+                else "Missing evidence: supported fields are "
+                + ", ".join(sorted(proposal))
+                + "; remaining fields need independent support."
+                if proposal and set(proposal) != set(unresolved(c))
+                else "Explicit confirmation of supported fields; no new judgment required."
+                if proposal
+                else f"Missing evidence: {len({h['transaction_id'] for h in prior})} prior reviewed"
+                " "
+                "transactions; three consistent observations or an applicable rule are required."
+            ),
         }
         if proposal:
             c["suggestion"].update(proposal)
@@ -135,7 +230,9 @@ def analyze(cards, history, budget=DEFAULT_REVIEW_BUDGET):
     groups = []
     covered = {}
     for members in buckets.values():
-        if len(members) < 2:
+        if len(members) < 2 and set(members[0]["review_analysis"]["proposal"]) != set(
+            unresolved(members[0])
+        ):
             continue
         members.sort(key=lambda c: c["transaction"]["id"])
         fields = members[0]["review_analysis"]["proposal"]
@@ -181,13 +278,22 @@ def analyze(cards, history, budget=DEFAULT_REVIEW_BUDGET):
         "individual_ids": [c["card_id"] for c in individuals],
         "minimal_review_ids": [c["card_id"] for c in individuals[:budget]],
         "budget": budget,
+        "novelty_audit": [novelty_audit(c) for c in cards],
         "summary": {
             "total_pending": len(cards),
             "groupable_transactions": len(covered),
             "groups": len(groups),
+            "multi_transaction_groups": sum(len(g["card_ids"]) > 1 for g in groups),
+            "known_single_confirmations": sum(len(g["card_ids"]) == 1 for g in groups),
             "individual_reviews_remaining": len(individuals),
             "genuinely_novel_individuals": sum(
-                not c["review_analysis"]["history"] for c in individuals
+                c["review_analysis"]["reason"] == "GENUINELY_NOVEL" for c in individuals
+            ),
+            "truly_novel_transactions": sum(
+                novelty_audit(c)["class"] == "TRUE_NOVEL" for c in individuals
+            ),
+            "other_ambiguous_individuals": sum(
+                novelty_audit(c)["class"] != "TRUE_NOVEL" for c in individuals
             ),
             "cards_avoided": max(0, full - len(groups)),
             "REPEATED_CONFIRMATION_AVOIDED": sum(len(g["card_ids"]) - 1 for g in groups),

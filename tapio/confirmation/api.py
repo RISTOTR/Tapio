@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from tapio.confirmation.concept_review import ConceptSelection
+from tapio.confirmation.grouping import DEFAULT_REVIEW_BUDGET
 from tapio.confirmation.mapping_review import MappingSelection
 from tapio.confirmation.rule_review import RuleSelection
 from tapio.confirmation.service import Commit, ConfirmationService, Selection
@@ -244,12 +245,7 @@ def concept_commit(body: ConceptCommit, request: Request):
 @router.post("/queue/next")
 def queue_next(body: NextWindow, request: Request):
     browser(request)
-    try:
-        result = persistent_queue().advance(body.window_id, refresh=body.refresh)
-        service.cache_clear()
-        return result
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from None
+    raise HTTPException(409, "Use the minimal review queue: /pilot/confirmation/groups")
 
 
 @router.get("/rules", response_class=HTMLResponse)
@@ -363,12 +359,25 @@ def groups_page():
 
 
 @router.get("/groups/cards")
-def groups_cards(response: Response, request: Request, budget: int = 10):
+def groups_cards(
+    response: Response,
+    request: Request,
+    budget: int = DEFAULT_REVIEW_BUDGET,
+    plan_id: str | None = None,
+):
     if not 1 <= budget <= 1000:
         raise HTTPException(422, "Review budget must be between 1 and 1000")
     try:
-        plan = group_review().build(budget)
-        return {**plan, "csrf": create_session(response, request)}
+        response.headers["Cache-Control"] = "no-store"
+        plan = group_review().live(plan_id, budget)
+        plan = {**plan, "writes_enabled": persistent_queue().enabled()}
+        return {
+            **plan,
+            "csrf": create_session(response, request),
+            "skipped_group_ids": [
+                p.stem for p in (persistent_queue().root / "minimal_review/skips").glob("*.json")
+            ],
+        }
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None
 
@@ -429,8 +438,7 @@ def group_individual_preview(body: IndividualSelection, request: Request):
         sid = browser(request)
         if body.selection.review_version is None:
             raise ValueError("UNCONFIRMED_UI_STATE_CHANGE")
-        _, s = group_review().get(body.plan_id)
-        return s.preview(body.selection, sid)
+        return group_review().individual_preview(body.plan_id, body.selection, sid)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None
 
@@ -454,5 +462,24 @@ def group_current(plan_id: str, response: Response):
     try:
         _, s = group_review().get(plan_id)
         return {cid: s.current_review(cid) for cid in s.cards} if s else {}
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.get("/groups/status")
+def group_status(plan_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        review = group_review()
+        return {"current": review.is_current(review.get(plan_id)[0])}
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.get("/groups/saved")
+def group_saved(plan_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return group_review().get(plan_id)[0]
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None

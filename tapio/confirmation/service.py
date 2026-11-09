@@ -65,32 +65,40 @@ def review_state(db, tx):
         .order_by(ConfirmationRevision.sequence.desc())
         .limit(1)
     )
-    confirmed = legacy is not None and legacy.review_status == "REVIEWED"
+    state, version = review_state_data(
+        row_data(tx), row_data(legacy) if legacy else None, row_data(latest) if latest else None
+    )
+    return state, version, latest
+
+
+def review_state_data(tx, legacy, latest):
+    """Same canonical projection for individual reads and a bulk queue audit."""
+    confirmed = legacy is not None and legacy["review_status"] == "REVIEWED"
     state = {
-        "category": legacy.confirmed_category if confirmed else None,
-        "context": legacy.confirmed_business_context if confirmed else None,
+        "category": legacy["confirmed_category"] if confirmed else None,
+        "context": legacy["confirmed_business_context"] if confirmed else None,
         "authority": {
             "category": "HUMAN_CONFIRMED"
-            if confirmed and legacy.confirmed_category is not None
+            if confirmed and legacy["confirmed_category"] is not None
             else "UNKNOWN",
             "context": "HUMAN_CONFIRMED"
-            if confirmed and legacy.confirmed_business_context is not None
+            if confirmed and legacy["confirmed_business_context"] is not None
             else "UNKNOWN",
         },
     }
     if latest:
-        if latest.audit.get("legacy_review_hash") != digest(row_data(legacy) if legacy else None):
+        if latest["audit"].get("legacy_review_hash") != digest(legacy):
             raise ValueError("LEGACY_REVIEW_CHANGED_REQUIRES_RECONCILIATION")
-        state = latest.state
+        state = latest["state"]
     version = digest(
         {
-            "transaction": row_data(tx),
-            "legacy_review": row_data(legacy) if legacy else None,
-            "latest_revision": str(latest.id) if latest else None,
+            "transaction": tx,
+            "legacy_review": legacy,
+            "latest_revision": str(latest["id"]) if latest else None,
             "state": state,
         }
     )
-    return state, version, latest
+    return state, version
 
 
 class ConfirmationService:
