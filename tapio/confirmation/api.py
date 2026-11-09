@@ -17,6 +17,7 @@ from tapio.confirmation.grouping import DEFAULT_REVIEW_BUDGET
 from tapio.confirmation.mapping_review import MappingSelection
 from tapio.confirmation.rule_review import RuleSelection
 from tapio.confirmation.service import Commit, ConfirmationService, Selection
+from tapio.pilot.workspace import shell
 
 router = APIRouter(prefix="/pilot/confirmation")
 SESSIONS = {}
@@ -55,7 +56,7 @@ def persistent_queue():
 
 @router.get("", response_class=HTMLResponse)
 def page():
-    return Path("tapio/confirmation/page.html").read_text()
+    return shell(Path("tapio/confirmation/page.html").read_text(), "Review", "Review")
 
 
 @router.get("/cards")
@@ -182,7 +183,7 @@ def commit(body: Commit, request: Request):
 
 @router.get("/concepts", response_class=HTMLResponse)
 def concept_page():
-    return Path("tapio/confirmation/concepts.html").read_text()
+    return shell(Path("tapio/confirmation/concepts.html").read_text(), "Review", "Review")
 
 
 @router.get("/concepts/cards")
@@ -250,7 +251,7 @@ def queue_next(body: NextWindow, request: Request):
 
 @router.get("/rules", response_class=HTMLResponse)
 def rule_page():
-    return Path("tapio/confirmation/rules.html").read_text()
+    return shell(Path("tapio/confirmation/rules.html").read_text(), "Review", "Review")
 
 
 @router.get("/rules/cards")
@@ -294,7 +295,7 @@ def rule_commit(body: RuleCommit, request: Request):
 
 @router.get("/mappings", response_class=HTMLResponse)
 def mapping_page():
-    return Path("tapio/confirmation/mappings.html").read_text()
+    return shell(Path("tapio/confirmation/mappings.html").read_text(), "Review", "Review")
 
 
 @router.get("/mappings/cards")
@@ -355,7 +356,7 @@ def group_review():
 
 @router.get("/groups", response_class=HTMLResponse)
 def groups_page():
-    return Path("tapio/confirmation/groups.html").read_text()
+    return shell(Path("tapio/confirmation/groups.html").read_text(), "Review", "Review")
 
 
 @router.get("/groups/cards")

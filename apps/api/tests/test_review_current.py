@@ -62,7 +62,7 @@ def test_real_browser_current_reload_navigation_restart(setup, factory):
         env=env,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=480,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "REAL_BROWSER_PASS" in result.stdout

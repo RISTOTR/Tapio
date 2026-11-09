@@ -14,7 +14,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   async function start(){server=spawn('.venv/bin/python',['-m','uvicorn','apps.api.tests.group_browser_server:app','--host','127.0.0.1','--port',String(port)],{env:process.env,stdio:['ignore','ignore','pipe']});server.stderr.on('data',v=>{serverLog=(serverLog+v).slice(-4000)});for(let i=0;i<600;i++){if(server.exitCode!==null)throw Error('Test server exited: '+serverLog);try{if((await fetch(url)).ok)return;}catch{}await sleep(100);}throw Error('Test server did not start: '+serverLog);}
   await start();
   chrome=spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--no-first-run','--no-default-browser-check','--remote-debugging-port=0',`--user-data-dir=${dir}`,'about:blank'],{stdio:['ignore','ignore','pipe']});
-  const endpoint=await new Promise((resolve,reject)=>{let log='';const timer=setTimeout(()=>reject(Error('Chrome start timeout')),20000);chrome.stderr.on('data',v=>{log+=v;const m=log.match(/DevTools listening on (ws:\/\/\S+)/);if(m){clearTimeout(timer);resolve(m[1]);}})});
+  const endpoint=await new Promise((resolve,reject)=>{let log='';const timer=setTimeout(()=>reject(Error('Chrome start timeout: '+log)),60000);chrome.stderr.on('data',v=>{log+=v;const m=log.match(/DevTools listening on (ws:\/\/\S+)/);if(m){clearTimeout(timer);resolve(m[1]);}})});
   ws=new WebSocket(endpoint);await once(ws,'open');let next=0,session;const pending=new Map();ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(pending.has(m.id)){const [ok,bad]=pending.get(m.id);pending.delete(m.id);m.error?bad(Error(JSON.stringify(m.error))):ok(m.result)}});
   const call=(method,params={},attach=true)=>new Promise((ok,bad)=>{const id=++next;pending.set(id,[ok,bad]);ws.send(JSON.stringify({id,method,params,...(attach&&session?{sessionId:session}:{})}));});
   const target=await call('Target.createTarget',{url:'about:blank'},false);session=(await call('Target.attachToTarget',{targetId:target.targetId,flatten:true},false)).sessionId;await call('Page.enable');
@@ -23,6 +23,16 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await call('Page.navigate',{url});
   await until("document.body.dataset.loaded==='true'");
   assert.equal(await js("document.querySelectorAll('#groups > article').length"),1);
+  await call('Emulation.setDeviceMetricsOverride',{width:1360,height:1000,deviceScaleFactor:1,mobile:false});
+  const fs=require('node:fs');fs.mkdirSync('data/interim/workspace_ui',{recursive:true});
+  async function capture(name){const r=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync('data/interim/workspace_ui/'+name+'.png',Buffer.from(r.data,'base64'));}
+  assert.equal(await js("document.documentElement.scrollWidth>innerWidth+1"),false);
+  const ax=await call('Accessibility.getFullAXTree');assert.deepEqual(ax.nodes.filter(n=>!n.ignored&&['button','textbox','combobox','link'].includes(n.role?.value)&&!n.name?.value).map(n=>n.role.value),[]);
+  await capture('review-groups-desktop');
+  await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+  assert.equal(await js("document.documentElement.scrollWidth>innerWidth+1"),false,'Narrow review must not overflow the page');await capture('review-groups-mobile');
+  await call('Emulation.setDeviceMetricsOverride',{width:1360,height:1000,deviceScaleFactor:1,mobile:false});
+
   await js("document.querySelector('#groups article button').click()");
   await until("[...document.querySelectorAll('button')].some(b=>b.textContent==='Apply displayed group')");
   // Hold the real refresh response while focus/poll events arrive. They must

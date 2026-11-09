@@ -24,6 +24,9 @@ SETTINGS = {
     "store": False,
 }
 HISTORY = Path("data/interim/pilot")
+# Preserved pre-import rows, authenticated by the ORIGINAL accepted table hashes.
+# Never create or refresh this archive from the live database at startup.
+HISTORICAL_SOURCE_ROWS = Path("data/interim/ongoing_import/before.json")
 
 
 def digest(path):
@@ -83,15 +86,22 @@ def readonly_session(engine):
 
 def source_fingerprints(engine, config):
     with readonly_session(engine) as session:
-        actual = {
-            name: fingerprint(
-                [
-                    dict(row)
-                    for row in session.execute(select(Document.metadata.tables[name])).mappings()
-                ]
-            )
+        rows = {
+            name: [
+                dict(row)
+                for row in session.execute(select(Document.metadata.tables[name])).mappings()
+            ]
             for name in config["source_fingerprints"]
         }
+    actual = {name: fingerprint(values) for name, values in rows.items()}
     if actual != config["source_fingerprints"]:
-        raise ValueError("SOURCE_SNAPSHOT_CHANGED")
+        from tapio.pilot.historical_sources import verify_historical_sources
+
+        try:
+            historical = json.loads(HISTORICAL_SOURCE_ROWS.read_text())
+            verify_historical_sources(rows, historical, config["source_fingerprints"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ValueError("SOURCE_SNAPSHOT_CHANGED") from exc
+    # Current-state fingerprints still detect changes during a question, and keep
+    # review callers' separately signed, current-source comparisons authoritative.
     return actual

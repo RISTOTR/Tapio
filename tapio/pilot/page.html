@@ -1,56 +1,41 @@
-<!doctype html>
-<html lang="en"><meta charset="utf-8"><title>Tapio local pilot</title>
-<style>body{max-width:850px;margin:2em auto;padding:0 1em;font:16px system-ui;line-height:1.5}textarea{width:100%;box-sizing:border-box}pre{white-space:pre-wrap;overflow-wrap:anywhere}section{margin:1.5em 0}button{padding:.5em 1em}.badge{display:inline-block;padding:.2em .6em;margin:.2em;border:1px solid #777;border-radius:.4em;font-size:.85em}.note{border-left:3px solid #ad7930;padding-left:1em}#answer{font-size:1.2em}summary{cursor:pointer;font-weight:600}small{color:#555}</style>
-<p><a href="/pilot/confirmation">Five-card confirmation preview</a></p><h1>Tapio read-only pilot</h1>
-<p><a href="/pilot/suggestions">Suggestion review — evaluation feedback only</a></p>
-<p>Ask one question about your imported evidence. Tapio cannot change sources. Name a calendar year, or one calendar month and year, for date-specific questions.</p>
-<form id="ask"><label for="question">Question</label><textarea id="question" rows="3" maxlength="7600" required></textarea><button id="send">Ask</button></form>
-<p id="availability" role="status"></p>
-<p id="status" role="status"></p>
-<div id="result" hidden>
-<div id="badges" aria-label="Evidence status"></div>
-<section><h2>Answer</h2><p id="answer"></p><ul id="breakdown"></ul></section>
-<section id="narrowing" hidden><h2>Try asking:</h2><ul id="suggestions"></ul></section>
-<section id="warnings" class="note"><p id="coverage-note"></p><p id="review-note"></p><ul id="limits"></ul></section>
-<section><h2>Evidence used</h2><ul id="evidence"></ul></section>
-<details id="optional"><summary>Optional details — all retrieved rows and supporting evidence</summary>
-<p>These details retain supporting evidence beyond the main answer. Retrieved rows may not cover the complete source data.</p>
-<details><summary>Transactions</summary><pre id="transactions"></pre></details>
-<details><summary>Documents and reconciliation</summary><pre id="documents"></pre></details>
-<details><summary>Other retained evidence</summary><pre id="other-details"></pre></details>
-<details><summary>Coverage and diagnostic data</summary><pre id="coverage"></pre></details>
-<details><summary>Original validated answer and backend warnings</summary><pre id="validated-answer"></pre></details>
-</details>
-<p><small id="usage"></small></p>
-<section><h2>Feedback</h2><form id="feedback"><label>Feedback <select id="rating"><option>GOOD</option><option>INCOMPLETE</option><option>WRONG_EVIDENCE</option><option>UNCLEAR</option><option>OTHER</option></select></label><p><label>Optional note<textarea id="note" maxlength="1000" rows="2"></textarea></label></p><button>Save feedback</button></form><p id="feedback-status" role="status"></p></section>
-</div>
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Ask · TAPIO</title>
+<div class="ask-layout"><h1>Ask your records</h1>
+<p class="intro">Get a concise answer backed by your own evidence. Calculations use local data; relevant document or email questions can use Gmail read-only when needed.</p>
+<form id="ask"><label for="question">What would you like to know?</label><textarea id="question" rows="3" maxlength="7600" required aria-describedby="question-help"></textarea><p id="question-help" class="review-guidance">Include a calendar year or month for totals. For email evidence, include the sender and period if you know them.</p><button id="send" type="submit">Ask</button></form>
+<div class="examples" aria-label="Example questions"><button type="button">What were my forestry expenses in 2025?</button><button type="button">Find Paytrail transactions in 2025</button><button type="button">Do I have invoices from Vattenfall in 2025?</button><button type="button">When does my electricity contract end?</button></div>
+<p id="availability" role="status"></p><p id="status" role="status" aria-live="polite"></p>
+<div id="result" hidden aria-label="Answer"><div id="badges" aria-label="Evidence status"></div>
+<section><h2 id="answer-heading" tabindex="-1">Answer</h2><p id="answer"></p><ul id="breakdown"></ul></section>
+<section id="narrowing" hidden><h2>Refine your question</h2><ul id="suggestions"></ul></section>
+<section id="warnings" class="note" aria-label="Evidence limitations"><p id="coverage-note"></p><p id="review-note"></p><ul id="limits"></ul></section>
+<section><h2>Sources used</h2><ul id="source-status" class="source-list"></ul><ul id="evidence"></ul></section>
+<details id="optional"><summary>Supporting evidence</summary><p class="review-guidance">Retrieved records may cover only part of the available source data. Email matches are evidence candidates, not confirmed classifications.</p>
+<section id="transactions-section"><h3>Transactions</h3><div id="transactions"></div></section><section id="documents-section"><h3>Documents and reconciliation</h3><div id="documents"></div></section><section id="other-section"><h3>Other evidence</h3><div id="other-details"></div></section></details>
+<details><summary>Answer feedback</summary><form id="feedback"><label for="rating">How useful was this answer?</label><select id="rating"><option value="GOOD">Useful</option><option value="INCOMPLETE">Incomplete</option><option value="WRONG_EVIDENCE">Wrong evidence</option><option value="UNCLEAR">Unclear</option><option value="OTHER">Other</option></select><label for="note">Optional note</label><textarea id="note" maxlength="1000" rows="2"></textarea><button>Save feedback</button></form><p id="feedback-status" role="status"></p></details>
+</div></div>
 <script>
 let session;
 const el=id=>document.getElementById(id);
 const list=(id,values)=>{el(id).replaceChildren();for(const text of values){const li=document.createElement('li');li.textContent=text;el(id).append(li)}};
+function evidenceSection(id,section,value){const has=Array.isArray(value)?value.length:Object.values(value||{}).some(v=>Array.isArray(v)?v.length:v&&typeof v==='object'?Object.keys(v).length:!!v);el(section).hidden=!has;Tapio.show(el(id),value)}
 function show(data){
  session=data.session.id;const details=data.optional_details||{};
  list('suggestions',data.suggestions||[]);el('narrowing').hidden=!(data.suggestions||[]).length;
- el('badges').replaceChildren();for(const state of data.evidence_states){const badge=document.createElement('span');badge.className='badge';badge.textContent=state;el('badges').append(badge)}
+ el('badges').replaceChildren();for(const state of data.evidence_states){const badge=document.createElement('span');badge.className='badge';badge.textContent=Tapio.label(state);el('badges').append(badge)}
  el('answer').textContent=data.direct_answer||data.answer;list('breakdown',data.relevant_breakdown||[]);
  el('coverage-note').textContent=data.coverage_note||'';el('review-note').textContent=data.human_review_note||'';
- list('limits',details.main_limitations||[]);el('warnings').hidden=!(data.coverage_note||data.human_review_note||(details.main_limitations||[]).length);
+ list('limits',[...new Set([...(details.main_limitations||[]),...(data.limitations||[])])]);el('warnings').hidden=!(data.coverage_note||data.human_review_note||el('limits').children.length);
  list('evidence',data.evidence_summary||[]);
- el('transactions').textContent=JSON.stringify(details.transactions||[],null,2);
- el('documents').textContent=JSON.stringify({documents:details.documents||[],reconciliation:details.reconciliation||[]},null,2);
- el('other-details').textContent=JSON.stringify({bank_aggregates:details.bank_aggregates||[],forestry_sales:details.forestry_sales||[],comparison:details.comparison||[],search:details.search||{}},null,2);
- el('coverage').textContent=JSON.stringify({coverage:data.coverage,human_review:data.human_review,evidence:data.evidence,limitations:data.limitations},null,2);
- el('validated-answer').textContent=data.answer;
- document.querySelectorAll('details').forEach(item=>item.open=false);
- el('usage').textContent=`${data.session.latency_seconds.toFixed(2)} seconds · ${data.session.model_calls} model calls · estimated $${data.session.estimated_cost_usd}${data.session.usage_complete?'':' (usage incomplete; billing may differ)'}`;
- el('feedback-status').textContent='';el('status').textContent='';el('result').hidden=false;
+ list('source-status',(data.sources||[]).map(s=>`${s.label} — ${s.status}${s.detail?': '+s.detail:''}`));
+ if(!(data.sources||[]).length)list('source-status',(data.evidence||[]).map(e=>`${Tapio.label(e.kind)} — ${e.records} records`));
+ evidenceSection('transactions','transactions-section',details.transactions||[]);
+ evidenceSection('documents','documents-section',{documents:details.documents||[],reconciliation:details.reconciliation||[],records:data.supporting_records||[]});
+ evidenceSection('other-details','other-section',{bank_aggregates:details.bank_aggregates||[],forestry_sales:details.forestry_sales||[],comparison:details.comparison||[]});
+ document.querySelectorAll('details').forEach(item=>item.open=false);el('feedback-status').textContent='';el('status').textContent='Answer ready.';el('result').hidden=false;document.querySelector('.examples').hidden=true;el('answer-heading').focus();
 }
-async function checkDatabase(){
- const response=await fetch('/pilot/health');const data=await response.json();
- el('availability').textContent=data.detail||'Local database status unavailable.';
- if(!response.ok)throw Error(data.detail||'Local database unavailable.');
-}
-checkDatabase().catch(error=>{el('availability').textContent=error.message});
-el('ask').onsubmit=async event=>{event.preventDefault();el('send').disabled=true;el('status').textContent='Retrieving and validating evidence…';el('result').hidden=true;try{await checkDatabase();const response=await fetch('/pilot/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:el('question').value})});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Question could not be processed.');show(data)}catch(error){el('status').textContent=error.message}finally{el('send').disabled=false}};
-el('feedback').onsubmit=async event=>{event.preventDefault();try{const response=await fetch('/pilot/feedback/'+session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rating:el('rating').value,note:el('note').value})});el('feedback-status').textContent=response.ok?'Feedback saved privately. Source data is unchanged.':'Feedback could not be saved.'}catch{el('feedback-status').textContent='Feedback could not be saved.'}};
+async function checkDatabase(){try{const response=await fetch('/pilot/health');const data=await response.json();el('availability').textContent=response.ok?'':'Local structured data is currently unavailable. Other evidence sources may still be available.';}catch{el('availability').textContent='Connection unavailable. Check that TAPIO is running locally.'}}
+checkDatabase();
+document.querySelectorAll('.examples button').forEach(b=>b.onclick=()=>{el('question').value=b.textContent;el('question').focus()});
+el('ask').onsubmit=async event=>{event.preventDefault();el('send').disabled=true;el('ask').setAttribute('aria-busy','true');el('status').textContent='Checking local evidence and routing relevant sources…';el('result').hidden=true;try{const response=await fetch('/pilot/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:el('question').value})});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Question could not be processed. Please try again.');show(data)}catch(error){el('status').textContent=Tapio.error(error.message)}finally{el('send').disabled=false;el('ask').setAttribute('aria-busy','false')}};
+el('feedback').onsubmit=async event=>{event.preventDefault();try{const response=await fetch('/pilot/feedback/'+session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rating:el('rating').value,note:el('note').value})});el('feedback-status').textContent=response.ok?'Feedback saved privately. Source data is unchanged.':'Feedback could not be saved. Please try again.'}catch{el('feedback-status').textContent='Feedback could not be saved. Check the connection and try again.'}};
 </script></html>

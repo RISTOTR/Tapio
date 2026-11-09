@@ -90,6 +90,8 @@ class Session(Schema):
 
 
 class PilotResponse(Schema):
+    sources: list[dict[str, str]] = Field(default_factory=list)
+    supporting_records: list[dict[str, JsonValue]] = Field(default_factory=list)
     answer: str
     failure_category: str | None = None
     suggestions: list[str] = Field(default_factory=list)

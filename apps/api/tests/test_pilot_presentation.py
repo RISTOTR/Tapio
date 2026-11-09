@@ -341,11 +341,12 @@ def test_raw_json_and_legacy_answer_inside_closed_details():
     page = Path("tapio/pilot/page.html").read_text()
     parser = Inspect()
     parser.feed(page)
-    assert {"coverage", "transactions", "validated-answer"} <= parser.hidden_ids
+    assert {"transactions", "documents", "other-details"} <= parser.hidden_ids
+    assert "textContent=JSON.stringify" not in page
     assert "data.direct_answer||data.answer" in page
     assert "innerHTML" not in page
     for rating in ("GOOD", "INCOMPLETE", "WRONG_EVIDENCE", "UNCLEAR", "OTHER"):
-        assert f"<option>{rating}</option>" in page
+        assert f'value="{rating}"' in page
 
 
 def test_document_catalog_and_invoice_merge_by_source_identity():

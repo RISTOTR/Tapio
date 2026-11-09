@@ -1,4 +1,4 @@
-"""Loopback-only pilot app; no imports of mutation or Gmail routers."""
+"""Loopback-only workspace with bounded evidence and explicitly gated review."""
 
 import logging
 from functools import lru_cache
@@ -17,9 +17,10 @@ from tapio.pilot.contracts import Ask, Feedback, PilotResponse
 from tapio.pilot.diagnostics import exception_detail
 from tapio.pilot.health import DATABASE_HELP, database_available
 from tapio.pilot.service import Pilot
+from tapio.pilot.workspace import placeholder, shell
 from tapio.suggestions.models import FeedbackInput
 
-app = FastAPI(title="Tapio read-only pilot", docs_url=None, redoc_url=None)
+app = FastAPI(title="TAPIO local workspace", docs_url=None, redoc_url=None)
 app.add_middleware(
     TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "[::1]", "testserver"]
 )
@@ -56,9 +57,28 @@ async def local_only(request: Request, call_next):
     return response
 
 
+@app.get("/app/ask", response_class=HTMLResponse)
 @app.get("/pilot", response_class=HTMLResponse)
 def page():
-    return Path(__file__).with_name("page.html").read_text()
+    return shell(Path(__file__).with_name("page.html").read_text(), "Ask", "Ask")
+
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/app", response_class=HTMLResponse)
+def workspace_home():
+    from fastapi.responses import RedirectResponse
+
+    return RedirectResponse("/pilot/confirmation/groups")
+
+
+@app.get("/app/import", response_class=HTMLResponse)
+def import_page():
+    return placeholder("Import")
+
+
+@app.get("/app/summary", response_class=HTMLResponse)
+def summary_page():
+    return placeholder("Summary")
 
 
 @app.post("/pilot/ask", response_model=PilotResponse)
@@ -66,7 +86,9 @@ async def ask(body: Ask):
     if not body.question.strip():
         raise HTTPException(422, "Please enter a question.")
     try:
-        return await get_pilot().ask(body.question.strip(), route="POST /pilot/ask")
+        from tapio.pilot.evidence_routing import answer_question
+
+        return await answer_question(get_pilot(), body.question.strip())
     except Exception as exc:
         # Storage/bootstrap failures cannot always be written to private history.
         # Emit only safe structured metadata, never str(exc), SQL or traceback text.
