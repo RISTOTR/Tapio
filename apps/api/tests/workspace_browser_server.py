@@ -54,7 +54,9 @@ class SyntheticPilot:
                 ]
             },
         )
-        self.history.save(session.id, {"response": result.model_dump(mode="json")})
+        self.history.save(
+            session.id, {"question": question, "response": result.model_dump(mode="json")}
+        )
         return result
 
 

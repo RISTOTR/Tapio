@@ -4,7 +4,18 @@ from tapio.pilot.transaction_search import SearchPlan, normalize_text
 
 CATALOG_VERSION = "EXPLICIT_EN_ES_FI_V1"
 CONCEPTS = {
-    "pharmacy": ("pharmacy", "apteekki", "farmacia"),
+    "pharmacy": (
+        "pharmacy",
+        "pharmacies",
+        "medication",
+        "apteekki",
+        "lääke",
+        "lääkitys",
+        "farmacia",
+    ),
+    "restaurant": ("restaurant", "restaurants", "ravintola", "baari", "kahvila"),
+    "road fees": ("road fees", "tiemaksut", "tiemaksu", "yksityistie", "tiekunta"),
+    "tax": ("tax", "taxes", "vero", "verohallinto"),
     "dentist": ("dentist", "dental", "dentista", "hammaslääkäri", "hammashoito", "odontologia"),
     "car repair": (
         "car repair",
@@ -19,6 +30,7 @@ CONCEPTS = {
     "hardware/building supplies": (
         "hardware",
         "building supplies",
+        "building materials",
         "rautakauppa",
         "rakennustarvikkeet",
         "ferreteria",
@@ -64,6 +76,10 @@ QUERY_WORDS = {
     "ostokset",
     "tapahtumat",
     "maksut",
+    "kaikki",
+    "anything",
+    "or",
+    "mentioning",
 }
 SPANISH = {"farmacia", "dentista", "taller", "gasolina", "seguro", "seguros"}
 FINNISH = {"apteekki", "hammaslaakari", "autohuolto", "polttoaine", "vakuutus"}

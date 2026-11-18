@@ -21,8 +21,9 @@ uses system-ui type, bordered review articles and explicit preview/apply control
 These are implementation observations, not an endorsement of every current style.
 Shared styles and evidence components live in tapio/pilot/workspace.css and
 workspace.js; workspace.py composes the shared navigation. Desktop and narrow
-layouts are verified with real-browser fixtures. Import and Summary remain
-explicit placeholders.
+layouts are verified with real-browser fixtures. Import provides file inspection,
+duplicate/new previews, explicit import, completion and ongoing Review handoff.
+Summary remains an explicit placeholder.
 
 ## Colors
 

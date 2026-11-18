@@ -34,9 +34,12 @@ def shell(content: str, active: str, title: str) -> str:
 <a href="/pilot/confirmation/mappings">Category mappings</a></nav>"""
     css = (ROOT / "workspace.css").read_text()
     js = (ROOT / "workspace.js").read_text()
+    if active == "Ask":
+        js += "\n" + (ROOT / "ask_results.js").read_text()
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{escape(title)} · TAPIO</title><style>{css}</style></head><body>
+<title>{escape(title)} · TAPIO</title><style>{css}</style></head>
+<body class="workspace-{escape(active.lower())}">
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="app-header"><a class="brand" href="/pilot/confirmation/groups">TAPIO</a>
 <nav class="app-nav" aria-label="Application">{nav}</nav>

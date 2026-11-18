@@ -32,6 +32,7 @@ def projected_review(tx, legacy, revisions):
         raise ValueError("LEGACY_REVIEW_CHANGED_REQUIRES_RECONCILIATION")
     state = revision.state
     return SimpleNamespace(
+        id=revision.id,
         review_status="REVIEWED",
         confirmed_category=state["category"],
         confirmed_business_context=state["context"],
@@ -56,3 +57,33 @@ def project_review_rows(reviews, revisions):
             "field_authority": row["state"]["authority"],
         }
     return list(result.values())
+
+
+def current_classified_transactions(db, periods, *, transaction_ids=None, limit=10000):
+    """Bounded shared read accessor; retain legacy state only when no revision exists."""
+    from sqlalchemy import or_
+
+    from apps.api.app.domain.models import Transaction, TransactionLabelReview
+
+    query = select(Transaction, TransactionLabelReview).outerjoin(
+        TransactionLabelReview, TransactionLabelReview.transaction_id == Transaction.id
+    )
+    if periods:
+        query = query.where(
+            or_(
+                *[
+                    (Transaction.booking_date >= p.date_from)
+                    & (Transaction.booking_date <= p.date_to)
+                    for p in periods
+                ]
+            )
+        )
+    if transaction_ids is not None:
+        query = query.where(Transaction.id.in_(transaction_ids))
+    rows = db.execute(
+        query.order_by(Transaction.booking_date, Transaction.id).limit(limit + 1)
+    ).all()
+    if len(rows) > limit:
+        raise ValueError("Narrow the transaction period; too many matching rows.")
+    revisions = current_revisions(db)
+    return [(tx, projected_review(tx, legacy, revisions)) for tx, legacy in rows]

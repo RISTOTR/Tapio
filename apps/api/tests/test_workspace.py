@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from test_pilot import make_pilot, session
+from test_pilot import session
 
 from tapio.pilot import api
 from tapio.pilot.contracts import Coverage, PilotResponse
@@ -251,14 +251,45 @@ def test_routes_share_shell_without_data_writes(monkeypatch, route, active):
     assert 'name="viewport"' in response.text
 
 
-def test_ask_endpoint_financial_engine_preserved(tmp_path, monkeypatch):
+def test_ask_endpoint_executes_validated_plan(tmp_path, monkeypatch):
+    from tapio.pilot import planned_answers
+    from tapio.pilot.query_plan import QueryPlan
+
     monkeypatch.setenv("TAPIO_PILOT_MODE", "true")
-    monkeypatch.setattr(api, "get_pilot", lambda: make_pilot(tmp_path))
+    planned = QueryPlan(intent="TRANSACTION_SEARCH", contexts=["FORESTRY"], metric="OUTFLOW")
+    raw = {
+        "choices": [
+            {
+                "finish_reason": "tool_calls",
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "submit_query_plan",
+                                "arguments": planned.model_dump_json(),
+                            }
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+    pilot = fake_pilot(tmp_path)
+    pilot.model_factory = lambda path: SimpleNamespace(transport=lambda payload: raw, usage=[])
+    monkeypatch.setattr(api, "get_pilot", lambda: pilot)
+
+    def retrieve(plan):
+        assert plan.contexts == ["FORESTRY"]
+        assert str(plan.periods[0].date_from) == "2025-01-01"
+        return [], []
+
+    monkeypatch.setattr(planned_answers, "load_transactions", retrieve)
     result = TestClient(api.app).post(
         "/pilot/ask", json={"question": "What were my forestry expenses in 2025?"}
     )
     assert result.status_code == 200
-    assert result.json()["sources"][0]["label"] == "Local structured data"
+    assert result.json()["failure_category"] == "NO_MATCHING_RECORDS"
+    assert result.json()["optional_details"]["query_plan"]["contexts"] == ["FORESTRY"]
 
 
 def test_no_raw_json_in_normal_ask_or_review_presentation():

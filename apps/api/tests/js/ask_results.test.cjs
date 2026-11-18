@@ -1,0 +1,12 @@
+const {readFileSync}=require('node:fs');
+const vm=require('node:vm');const assert=require('node:assert/strict');
+const scope={window:{}};vm.runInNewContext(readFileSync('tapio/pilot/ask_results.js','utf8'),scope);
+const view=scope.window.TapioAsk;
+const rows=view.rows({supporting_records:[{transaction_id:'test',booking_date:'2026-01-01',counterparty:'=SUM(1,2)',amount:'-123.45',currency:'EUR',suggestion:'Possible deduction',vat_status:'Not calculated',business_context:'FORESTRY'}]});
+assert.equal(rows[0].date,'2026-01-01');assert.equal(rows[0].status,'Possible deduction');
+const csv=view.csv(rows);assert.ok(csv.startsWith('\ufeffdate,description,amount'));
+assert.ok(csv.includes('"\'=SUM(1,2)"'));assert.ok(csv.includes('"-123.45"'));
+assert.ok(csv.includes('Not calculated'));assert.ok(csv.includes('FORESTRY'));
+assert.equal(view.rows({}).length,0);
+assert.equal(view.rows({supporting_records:[{source:'Gmail read-only',subject:'Synthetic invoice',date:'2026-11-02',reference:'mail'}]})[0].amount,'');
+console.log('Ask result normalization and CSV safety passed.');

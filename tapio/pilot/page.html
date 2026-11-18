@@ -2,24 +2,28 @@
 <div class="ask-layout"><h1>Ask your records</h1>
 <p class="intro">Get a concise answer backed by your own evidence. Calculations use local data; relevant document or email questions can use Gmail read-only when needed.</p>
 <form id="ask"><label for="question">What would you like to know?</label><textarea id="question" rows="3" maxlength="7600" required aria-describedby="question-help"></textarea><p id="question-help" class="review-guidance">Include a calendar year or month for totals. For email evidence, include the sender and period if you know them.</p><button id="send" type="submit">Ask</button></form>
+<p id="context-note" class="review-guidance" hidden></p><button id="new-question" type="button" hidden>Start a new question</button>
 <div class="examples" aria-label="Example questions"><button type="button">What were my forestry expenses in 2025?</button><button type="button">Find Paytrail transactions in 2025</button><button type="button">Do I have invoices from Vattenfall in 2025?</button><button type="button">When does my electricity contract end?</button></div>
 <p id="availability" role="status"></p><p id="status" role="status" aria-live="polite"></p>
 <div id="result" hidden aria-label="Answer"><div id="badges" aria-label="Evidence status"></div>
 <section><h2 id="answer-heading" tabindex="-1">Answer</h2><p id="answer"></p><ul id="breakdown"></ul></section>
+<section id="result-records" hidden><div class="result-heading"><h2>Results</h2><div><button id="analyze-attachments" type="button" hidden>Analyze email PDFs</button><button id="export-results" type="button">Export CSV</button></div></div><p id="result-count" class="review-guidance"></p><div id="readable-results"></div></section>
 <section id="narrowing" hidden><h2>Refine your question</h2><ul id="suggestions"></ul></section>
 <section id="warnings" class="note" aria-label="Evidence limitations"><p id="coverage-note"></p><p id="review-note"></p><ul id="limits"></ul></section>
 <section><h2>Sources used</h2><ul id="source-status" class="source-list"></ul><ul id="evidence"></ul></section>
 <details id="optional"><summary>Supporting evidence</summary><p class="review-guidance">Retrieved records may cover only part of the available source data. Email matches are evidence candidates, not confirmed classifications.</p>
 <section id="transactions-section"><h3>Transactions</h3><div id="transactions"></div></section><section id="documents-section"><h3>Documents and reconciliation</h3><div id="documents"></div></section><section id="other-section"><h3>Other evidence</h3><div id="other-details"></div></section></details>
-<details><summary>Answer feedback</summary><form id="feedback"><label for="rating">How useful was this answer?</label><select id="rating"><option value="GOOD">Useful</option><option value="INCOMPLETE">Incomplete</option><option value="WRONG_EVIDENCE">Wrong evidence</option><option value="UNCLEAR">Unclear</option><option value="OTHER">Other</option></select><label for="note">Optional note</label><textarea id="note" maxlength="1000" rows="2"></textarea><button>Save feedback</button></form><p id="feedback-status" role="status"></p></details>
+<details><summary>Was this answer useful?</summary><form id="feedback"><label for="rating">How useful was this answer?</label><select id="rating"><option value="GOOD">Useful</option><option value="INCOMPLETE">Incomplete</option><option value="WRONG_EVIDENCE">Wrong evidence</option><option value="UNCLEAR">Unclear</option><option value="OTHER">Other</option></select><label for="note">What should be clearer or corrected?</label><textarea id="note" maxlength="1000" rows="2"></textarea><button>Save feedback</button></form><p id="feedback-status" role="status"></p></details>
 </div></div>
 <script>
-let session;
+let session,previousQuestion,resultRows=[];
 const el=id=>document.getElementById(id);
 const list=(id,values)=>{el(id).replaceChildren();for(const text of values){const li=document.createElement('li');li.textContent=text;el(id).append(li)}};
 function evidenceSection(id,section,value){const has=Array.isArray(value)?value.length:Object.values(value||{}).some(v=>Array.isArray(v)?v.length:v&&typeof v==='object'?Object.keys(v).length:!!v);el(section).hidden=!has;Tapio.show(el(id),value)}
 function show(data){
- session=data.session.id;const details=data.optional_details||{};
+ session=data.session.id;previousQuestion=el('question').value;el('context-note').hidden=false;el('context-note').textContent='Follow-ups can use the subject and period of: '+previousQuestion;el('new-question').hidden=false;el('note').value='';el('rating').value='GOOD';const details=data.optional_details||{};
+ el('analyze-attachments').hidden=!(data.supporting_records||[]).some(r=>r.source==='Gmail read-only'&&(r.attachments||[]).length);
+ resultRows=TapioAsk.rows(data);el('result-records').hidden=!resultRows.length;TapioAsk.render(el('readable-results'),resultRows);el('result-count').textContent=(resultRows.length>50?'Showing 50 of '+resultRows.length:resultRows.length+' retrieved records')+'. CSV exports the retrieved rows and their evidence status.';
  list('suggestions',data.suggestions||[]);el('narrowing').hidden=!(data.suggestions||[]).length;
  el('badges').replaceChildren();for(const state of data.evidence_states){const badge=document.createElement('span');badge.className='badge';badge.textContent=Tapio.label(state);el('badges').append(badge)}
  el('answer').textContent=data.direct_answer||data.answer;list('breakdown',data.relevant_breakdown||[]);
@@ -35,7 +39,10 @@ function show(data){
 }
 async function checkDatabase(){try{const response=await fetch('/pilot/health');const data=await response.json();el('availability').textContent=response.ok?'':'Local structured data is currently unavailable. Other evidence sources may still be available.';}catch{el('availability').textContent='Connection unavailable. Check that TAPIO is running locally.'}}
 checkDatabase();
+el('analyze-attachments').onclick=()=>{el('question').value='Analyze the PDF attachments from these emails';el('ask').requestSubmit()};
+el('export-results').onclick=()=>{const url=URL.createObjectURL(new Blob([TapioAsk.csv(resultRows)],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='tapio-ask-results.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+el('new-question').onclick=()=>{session=null;previousQuestion=null;resultRows=[];el('context-note').hidden=true;el('new-question').hidden=true;el('result').hidden=true;document.querySelector('.examples').hidden=false;el('question').value='';el('question').focus()};
 document.querySelectorAll('.examples button').forEach(b=>b.onclick=()=>{el('question').value=b.textContent;el('question').focus()});
-el('ask').onsubmit=async event=>{event.preventDefault();el('send').disabled=true;el('ask').setAttribute('aria-busy','true');el('status').textContent='Checking local evidence and routing relevant sources…';el('result').hidden=true;try{const response=await fetch('/pilot/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:el('question').value})});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Question could not be processed. Please try again.');show(data)}catch(error){el('status').textContent=Tapio.error(error.message)}finally{el('send').disabled=false;el('ask').setAttribute('aria-busy','false')}};
+el('ask').onsubmit=async event=>{event.preventDefault();el('send').disabled=true;el('ask').setAttribute('aria-busy','true');el('status').textContent='Checking local evidence and routing relevant sources…';el('result').hidden=true;try{const response=await fetch('/pilot/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:el('question').value,previous_session:session||null})});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Question could not be processed. Please try again.');show(data)}catch(error){el('status').textContent=Tapio.error(error.message)}finally{el('send').disabled=false;el('ask').setAttribute('aria-busy','false')}};
 el('feedback').onsubmit=async event=>{event.preventDefault();try{const response=await fetch('/pilot/feedback/'+session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rating:el('rating').value,note:el('note').value})});el('feedback-status').textContent=response.ok?'Feedback saved privately. Source data is unchanged.':'Feedback could not be saved. Please try again.'}catch{el('feedback-status').textContent='Feedback could not be saved. Check the connection and try again.'}};
 </script></html>

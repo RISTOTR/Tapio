@@ -50,7 +50,17 @@ def terms(question):
     ][:12]
 
 
+def providers(question):
+    """Known owner-supplied provider names; never derive mailbox syntax from evidence."""
+    return [
+        name for name in ("Elenia", "Vattenfall") if re.search(r"\b" + name + r"\b", question, re.I)
+    ]
+
+
 def subject(question):
+    selected = providers(question)
+    if selected:
+        return selected[0] if len(selected) == 1 else None
     explicit = re.search(r"from[:\s]+([\w@.-]+)", question, re.I)
     if explicit and not explicit[1].isdigit():
         return explicit[1].rstrip(".?")
@@ -60,6 +70,9 @@ def subject(question):
 
 
 def match(text, question):
+    selected = providers(question)
+    if selected:
+        return any(re.search(r"\b" + name + r"\b", text, re.I) for name in selected)
     words = terms(question)
     # Generic contract questions may match stored electricity contract facts;
     # an unspecified invoice search must not become a mailbox-wide search.
@@ -121,6 +134,9 @@ def local_evidence(question):
                 Kind.RELATIONSHIP,
                 Kind.RECIPIENT_CONCEPT,
             } or not queries.accepted(item):
+                continue
+            # Undated knowledge cannot establish evidence for a requested month/year.
+            if period(question)[0] and not re.search(r"\bcontract\b", question, re.I):
                 continue
             if match(claim.subject + " " + claim.predicate + " " + str(claim.value), question):
                 records.append(
@@ -236,11 +252,20 @@ def local_evidence(question):
 
 def gmail_query(question, records):
     """Derive bounded search from user scope or matching accepted email evidence."""
+    selected = providers(question)
     sender = subject(question)
     try:
         dates = period(question)
     except ValueError:
         return None
+    if selected and dates[0]:
+        end = date.fromisoformat(dates[1]) + timedelta(days=1)
+        start = dates[0].replace("-", "/")
+        sender_filter = selected[0] if len(selected) == 1 else "(" + " OR ".join(selected) + ")"
+        return Search(
+            query=f"from:{sender_filter} after:{start} before:{end:%Y/%m/%d}",
+            max_results=5,
+        )
     if not sender:
         senders = {
             re.search(r"[\w.+-]+@[\w.-]+", r.get("sender", ""))[0]
@@ -256,6 +281,12 @@ def gmail_query(question, records):
     end = date.fromisoformat(dates[1]) + timedelta(days=1)
     query = f"from:{sender} after:{dates[0].replace('-', '/')} before:{end:%Y/%m/%d}"
     return Search(query=query, max_results=5)
+
+
+def needs_gmail_auth(exc):
+    if str(exc) == "AUTHENTICATION_REQUIRED":
+        return True
+    return any(needs_gmail_auth(child) for child in getattr(exc, "exceptions", ()))
 
 
 async def gmail_lookup(search, audit_dir):
@@ -427,11 +458,13 @@ async def answer_question(
                 "detail": "Bank evidence checked before document/email lookup.",
             },
         )
+    explicit_mail = bool(re.search(r"\b(gmail|email|message)\b", question, re.I))
+    if explicit_mail:
+        records = [r for r in records if r.get("source") == "Stored email evidence"]
     for source in sources:
         if any(record.get("source") == source["label"] for record in records):
             source["status"] = "partially used" if source["status"] == "unavailable" else "used"
     direct = accepted_answer(question, records)
-    explicit_mail = bool(re.search(r"\b(gmail|email|message)\b", question, re.I))
     # Document existence can be satisfied locally; metadata cannot establish dates/purpose.
     existence = bool(
         re.search(r"\b(have|find|exist|show|list)\b", question, re.I)
@@ -488,13 +521,18 @@ async def answer_question(
                         "Email results are limited; refine the sender or period "
                         "for more precise evidence."
                     )
-            except Exception:
+            except Exception as exc:
+                auth_required = needs_gmail_auth(exc)
                 sources.append(
                     {
                         "label": "Gmail read-only",
-                        "status": "unavailable",
-                        "detail": "Email lookup could not complete. "
-                        "Check the existing Gmail connection and try again.",
+                        "status": "authentication required" if auth_required else "unavailable",
+                        "detail": (
+                            "Reconnect the existing Gmail read-only authorization, then retry."
+                            if auth_required
+                            else "Email lookup could not complete. "
+                            "Check the existing Gmail connection and try again."
+                        ),
                     }
                 )
                 limitations.append(
@@ -522,6 +560,29 @@ async def answer_question(
                 "detail": "Stored evidence is sufficient for this lookup.",
             }
         )
+    if explicit_mail:
+        live = [r for r in records if r.get("source") == "Gmail read-only"]
+        gmail = next((s for s in reversed(sources) if s["label"] == "Gmail read-only"), {})
+        scope = " and ".join(providers(question)) or subject(question) or "the requested sender"
+        start, end = period(question)
+        scoped = f"{scope}, {start} to {end}" if start else scope
+        if gmail.get("status") in {"used", "checked"}:
+            direct = (
+                f"Found {len(live)} candidate email messages for {scoped}. "
+                "Open the supporting evidence to inspect subjects and excerpts."
+                if live
+                else f"No email messages matched the bounded search for {scoped}."
+            )
+        elif gmail.get("status") == "authentication required":
+            direct = (
+                f"Gmail needs authorization before I can search {scoped}. "
+                "Reconnect Gmail read-only, then ask again."
+            )
+        elif gmail.get("status") == "unavailable":
+            direct = (
+                f"I could not complete the Gmail search for {scoped}. "
+                "Try again after checking the connection."
+            )
     if not direct:
         direct = (
             f"Found {len(records)} relevant evidence records to inspect."

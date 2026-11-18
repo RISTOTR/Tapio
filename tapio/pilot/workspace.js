@@ -17,3 +17,12 @@ window.Tapio={
 };
 
 document.addEventListener('DOMContentLoaded',()=>{for(const link of document.querySelectorAll('.review-nav a'))if(link.pathname===location.pathname)link.setAttribute('aria-current','page')});
+
+// Keep the artwork and card offsets aligned with the responsive navigation.
+(()=>{
+ const header=document.querySelector('.app-header');
+ if(!header)return;
+ const sync=()=>document.documentElement.style.setProperty('--nav-height',header.getBoundingClientRect().height+'px');
+ sync();
+ new ResizeObserver(sync).observe(header);
+})();

@@ -18,6 +18,7 @@ FeedbackKind = Literal["GOOD", "INCOMPLETE", "WRONG_EVIDENCE", "UNCLEAR", "OTHER
 
 
 class Ask(Schema):
+    previous_session: str | None = Field(default=None, pattern=r"^[0-9a-f-]{36}$")
     question: str = Field(min_length=1, max_length=7600)
 
 

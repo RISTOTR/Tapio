@@ -78,6 +78,7 @@ def import_bank_bytes(
     source_filename: str,
     account_key: str,
     session_factory: sessionmaker[Session],
+    source_type: str = SOURCE_TYPE,
     parser_version: str = PARSER_VERSION,
     normalize: Callable[[bytes, str], pl.DataFrame] = canonical_bank,
 ) -> BankImportResult:
@@ -87,10 +88,10 @@ def import_bank_bytes(
     if not filename.strip():
         raise BankInputError("missing_source_filename")
     digest = sha256(raw).hexdigest()
-    namespace = f"{SOURCE_TYPE}:{account_key}"
+    namespace = f"{source_type}:{account_key}"
     lock_key = int.from_bytes(sha256(namespace.encode()).digest()[:8], signed=True)
     file_key = int.from_bytes(
-        sha256(f"{SOURCE_TYPE}:{parser_version}:{digest}".encode()).digest()[:8], signed=True
+        sha256(f"{source_type}:{parser_version}:{digest}".encode()).digest()[:8], signed=True
     )
     parsed = loaded = skipped = 0
     outcome = "failed"
@@ -101,7 +102,7 @@ def import_bank_bytes(
         session.execute(select(func.pg_advisory_xact_lock(file_key)))
         session.execute(select(func.pg_advisory_xact_lock(lock_key)))
         run = ImportRun(
-            source_type=SOURCE_TYPE,
+            source_type=source_type,
             source_filename=filename,
             sha256=digest,
             parser_version=parser_version,
@@ -116,7 +117,7 @@ def import_bank_bytes(
                     select(ImportRun)
                     .where(
                         ImportRun.sha256 == digest,
-                        ImportRun.source_type == SOURCE_TYPE,
+                        ImportRun.source_type == source_type,
                         ImportRun.parser_version == parser_version,
                         ImportRun.status == ImportStatus.COMPLETED,
                         ImportRun.source_metadata["outcome"].astext == "imported",

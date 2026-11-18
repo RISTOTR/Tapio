@@ -9,9 +9,11 @@ from uuid import UUID
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from tapio.confirmation.api import router as confirmation_router
+from tapio.importing.api import router as import_router
 from tapio.pilot.config import require_mode
 from tapio.pilot.contracts import Ask, Feedback, PilotResponse
 from tapio.pilot.diagnostics import exception_detail
@@ -21,6 +23,7 @@ from tapio.pilot.workspace import placeholder, shell
 from tapio.suggestions.models import FeedbackInput
 
 app = FastAPI(title="TAPIO local workspace", docs_url=None, redoc_url=None)
+app.mount("/assets", StaticFiles(directory=Path(__file__).with_name("static")), name="assets")
 app.add_middleware(
     TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "[::1]", "testserver"]
 )
@@ -73,7 +76,7 @@ def workspace_home():
 
 @app.get("/app/import", response_class=HTMLResponse)
 def import_page():
-    return placeholder("Import")
+    return shell(Path(__file__).with_name("import.html").read_text(), "Import", "Import")
 
 
 @app.get("/app/summary", response_class=HTMLResponse)
@@ -86,9 +89,9 @@ async def ask(body: Ask):
     if not body.question.strip():
         raise HTTPException(422, "Please enter a question.")
     try:
-        from tapio.pilot.evidence_routing import answer_question
+        from tapio.pilot.planned_answers import answer_planned
 
-        return await answer_question(get_pilot(), body.question.strip())
+        return await answer_planned(get_pilot(), body.question.strip(), body.previous_session)
     except Exception as exc:
         # Storage/bootstrap failures cannot always be written to private history.
         # Emit only safe structured metadata, never str(exc), SQL or traceback text.
@@ -186,3 +189,5 @@ def suggestion_feedback(card_id: str, body: FeedbackInput):
 # Narrow, separately gated human confirmation; no generic mutation router.
 
 app.include_router(confirmation_router)
+
+app.include_router(import_router)

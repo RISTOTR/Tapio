@@ -87,7 +87,7 @@ def cards(response: Response, request: Request):
     return populate_cards(s, result)
 
 
-def create_session(response, request=None):
+def create_session(response, request=None, *, path="/pilot/confirmation"):
     response.headers["Cache-Control"] = "no-store"
     if request is not None:
         sid = request.cookies.get("tapio_confirmation_session", "")
@@ -109,7 +109,7 @@ def create_session(response, request=None):
         httponly=True,
         samesite="strict",
         max_age=7200,
-        path="/pilot/confirmation",
+        path=path,
     )
     return csrf
 

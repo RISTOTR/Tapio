@@ -73,6 +73,10 @@ class SearchPlan(Schema):
                 "payments",
                 "purchase",
                 "purchases",
+                "maksut",
+                "maksuja",
+                "olen",
+                "tehnyt",
             }:
                 raise ValueError("SEARCH_TERM_NOT_SPECIFIC")
         return self

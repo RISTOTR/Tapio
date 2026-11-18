@@ -60,7 +60,12 @@ class Queries:
             rows = session.execute(query.order_by(t.booking_date, t.id).limit(1001)).all()
             if len(rows) > 1000:
                 raise ToolFailure(ErrorCode.OUTPUT_LIMIT)
-            return summarize_rows(rows, args)
+            from tapio.confirmation.projection import current_revisions, projected_review
+
+            revisions = current_revisions(session)
+            return summarize_rows(
+                [(tx, projected_review(tx, review, revisions)) for tx, review in rows], args
+            )
 
     def saved_energy_comparison(self, args):
         # Fixed local artifact only: never run or alter the electricity engine in Phase 06.
@@ -321,21 +326,25 @@ class Queries:
 
     def invoice_summary(self, s, row):
         doc = s.get(Document, row.document_id)
-        linked = s.execute(
-            select(
-                TransactionInvoiceAllocation.status,
-                TransactionLabelReview.confirmed_business_context,
-            )
-            .join(
-                TransactionLabelReview,
-                TransactionLabelReview.transaction_id
-                == TransactionInvoiceAllocation.transaction_id,
-            )
-            .where(
-                TransactionInvoiceAllocation.invoice_id == row.id,
-                TransactionLabelReview.review_status == "REVIEWED",
+        from tapio.confirmation.projection import current_classified_transactions
+
+        allocations = s.scalars(
+            select(TransactionInvoiceAllocation).where(
+                TransactionInvoiceAllocation.invoice_id == row.id
             )
         ).all()
+        current = {
+            tx.id: review
+            for tx, review in current_classified_transactions(
+                s, [], transaction_ids=[a.transaction_id for a in allocations]
+            )
+        }
+        linked = [
+            (a.status, current[a.transaction_id].confirmed_business_context)
+            for a in allocations
+            if current.get(a.transaction_id) is not None
+            and current[a.transaction_id].review_status == "REVIEWED"
+        ]
         return S.InvoiceSummary(
             source_business_context=row.business_context.value.upper()
             if row.business_context

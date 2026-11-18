@@ -7,7 +7,8 @@ from decimal import Decimal
 
 from data_pipeline.ingest.bank_csv import SOURCE_TYPE
 from data_pipeline.labels.snapshot import fingerprint
-from data_pipeline.normalize.bank import canonical_bank
+from data_pipeline.normalize.sampo import SOURCE_TYPE as SAMPO_TYPE
+from data_pipeline.normalize.sampo import adapter, sampo_account
 from integrations.gmail.cache import private_write
 from tapio.knowledge.models import digest
 
@@ -55,7 +56,7 @@ def accept_bank_import(queue, before, after, result, raw):
         raise ValueError("UNEXPECTED_IMPORT_RUN")
     run = runs[0]
     if (
-        run["source_type"] != SOURCE_TYPE
+        run["source_type"] not in {SOURCE_TYPE, SAMPO_TYPE}
         or run["status"] != "completed"
         or run["sha256"] != result.sha256
         or run["source_filename"] != result.source_file
@@ -63,12 +64,19 @@ def accept_bank_import(queue, before, after, result, raw):
         or run["row_count"] != result.rows_loaded
     ):
         raise ValueError("BANK_IMPORT_PROVENANCE_MISMATCH")
-    frame = canonical_bank(raw, result.source_file)
+    parser_version, normalize = adapter(run["source_type"])
+    if run["parser_version"] != parser_version or result.parser_version != parser_version:
+        raise ValueError("BANK_IMPORT_PROVENANCE_MISMATCH")
+    frame = normalize(raw, result.source_file)
     rows = {r["source_transaction_id"]: r for r in frame.iter_rows(named=True)}
     new = added["transactions"]
     if len(new) != result.rows_loaded or frame.height != result.rows_parsed:
         raise ValueError("BANK_IMPORT_COUNT_MISMATCH")
     namespace = run["source_metadata"]["source_namespace"]
+    if not namespace.startswith(run["source_type"] + ":"):
+        raise ValueError("BANK_IMPORT_PROVENANCE_MISMATCH")
+    if run["source_type"] == SAMPO_TYPE and namespace != SAMPO_TYPE + ":" + sampo_account(frame)[1]:
+        raise ValueError("BANK_IMPORT_PROVENANCE_MISMATCH")
     for tx in new:
         expected = rows.get(tx["source_transaction_id"])
         if not expected or tx["import_run_id"] != run["id"] or tx["source_namespace"] != namespace:

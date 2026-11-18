@@ -47,7 +47,10 @@ def comparison_plan(question, *, today=None):
     if not comparison_intent(question):
         return None
     q = normalize_text(question)
-    if re.search(r"\b(invoice|invoices|tax|deduct\w*|vat|receipt|receipts)\b", q):
+    if re.search(
+        r"\b(invoice|invoices|bills?|solar\w*|panels?|output|kwh|tax|deduct\w*|vat|receipt|receipts)\b",
+        q,
+    ):
         raise ValueError("UNSUPPORTED_QUESTION")
     today = today or date.today()
     relative = re.search(r"last (" + MONTH_PATTERN + r") than the \1 before", q)
@@ -115,6 +118,12 @@ def comparison_plan(question, *, today=None):
         "number",
         "of",
         "spending",
+        "maksut",
+        "expenses",
+        "expense",
+        "were",
+        "was",
+        "are",
     }
     subject = " ".join(w for w in q.split() if w not in grammar)
     if not subject or subject in {"between", "before", "after", "since"}:
@@ -141,6 +150,10 @@ def retrieve_comparison(plan, session_factory):
             .order_by(Transaction.booking_date, Transaction.id)
             .limit(MAX_SCANNED + 1)
         ).all()
+        from tapio.confirmation.projection import current_revisions, projected_review
+
+        revisions = current_revisions(db)
+        pairs = [(tx, projected_review(tx, review, revisions)) for tx, review in pairs]
         # Preserve loaded scalar evidence across the read-only session rollback.
         db.expunge_all()
     if len(pairs) > MAX_SCANNED:
