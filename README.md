@@ -43,6 +43,19 @@ baseline, not every feature subsequently added.
   results and expandable evidence. Supported transaction results can be exported as CSV.
 - **Summary** (`/app/summary`): placeholder for a future period overview.
 
+### Correct classifications from Ask
+
+For example: `Change Example Shop Oy transaction 22/05/2026 to category OTHER
+and business context FORESTRY`.
+
+Ask finds matching transactions by merchant and exact payment date. Select one,
+choose **Preview correction**, review current/proposed values, then choose
+**Confirm and apply correction**. Omitted fields stay unchanged. Corrections append
+review history and become authoritative for subsequent answers; they do not rewrite
+source transactions or create reusable rules. Multiple matches require selection.
+Expired or stale previews require a fresh request. This explicit command supports
+category/context values from the existing Review vocabulary, not arbitrary data edits.
+
 ### Sampo card imports
 
 Choose **Sampo card export** in Import to add expenses paid outside the Finnish bank
@@ -147,10 +160,16 @@ reports retain the decisions, failures and validation behind that progression.
 
 Real bank files, invoices, Gmail content and source documents are not committed.
 Runtime datasets, OAuth credentials and tokens remain local under ignored paths;
-public fixtures are synthetic or redacted. Privacy checks scan every versioned
-file, with optional private denylist matching and nonignored-new-file checks.
+public fixtures are synthetic or redacted. Privacy checks scan application and documentation files, with optional private
+denylist matching and nonignored-new-file checks. Root-level `.agents/`, `.claude/`
+and `.codex/` tooling directories are excluded; reports disclose that excluded scope.
+A clean scan does not certify those directories or Git history. Machine-local
+`.claude/settings.local.json` is untracked and ignored.
 Historical documentation previously exposed metering identifiers; current-tree
-redaction does **not** erase Git history. See the [privacy review](docs/repository_privacy_review.md).
+redaction does **not** erase Git history. **Git history is public and unscrubbed.**
+On 18 November 2026, the owner explicitly accepted the existing metering-identifier
+exposure; no history rewrite or identifier replacement is authorized or claimed.
+This acceptance concerns the known metering identifiers, not future credential leaks. See the [privacy review](docs/repository_privacy_review.md).
 
 ## Running locally
 
@@ -183,6 +202,40 @@ PostgreSQL defaults to port 5433. The example credentials are for local developm
 keep `DATABASE_URL` and `POSTGRES_*` settings consistent. If installed separately,
 use `docker-compose` instead of `docker compose`. `/health` checks database access.
 This API startup command does not invoke a model or import private datasets.
+
+### Ask feedback regression set
+
+The starter acceptance set in `apps/api/tests/test_ask_regression_set.py` uses
+synthetic, human-reviewed transactions to check exact returned IDs, deterministic
+totals, date/context/category constraints, source traceability and tax suggestions.
+It includes Finnish-bank and Sampo-style records, refunds, unreviewed records and
+empty results. Local numeric questions must not search Gmail.
+
+```sh
+uv run pytest -q apps/api/tests/test_ask_regression_set.py apps/api/tests/test_ask_query_plan.py
+```
+
+For each new Ask failure, add a sanitized question, expected transaction IDs/total
+and evidence expectations before implementing the fix. Keep original private
+feedback out of Git. These tests use fixed proposed plans and synthetic retrieval
+boundaries: they do not measure live model interpretation accuracy or real Gmail
+availability. Existing query-plan tests cover conditional email/attachment routing
+and energy coverage.
+
+A separate opt-in evaluation sends six synthetic questions to TAPIO's configured
+model and checks the validated plans against explicit expectations:
+
+```sh
+uv run python -m scripts.evaluate_ask_plans         # inspect cases; no model calls
+uv run python -m scripts.evaluate_ask_plans --live  # up to six paid model calls
+```
+
+It uses a fixed reference date for reproducibility, prints per-case failures, and
+exits nonzero on failures or provider errors. It reads no transaction data and
+performs no Gmail calls. A pass measures this small plan set, not answer correctness
+or broad model reliability. On 18 November 2026, the initial run passed 3/6; after
+fixing quoted constraint spans and receipt/attachment routing, a fresh run passed
+6/6. These are development cases, not a sealed holdout.
 
 ### Proportionate verification
 

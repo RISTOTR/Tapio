@@ -41,3 +41,6 @@ credentials.json
 token.json
 token-*.json
 /gmail-cache/
+
+# Machine-local agent permissions and settings.
+/.claude/settings.local.json

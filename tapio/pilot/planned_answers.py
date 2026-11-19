@@ -18,6 +18,10 @@ from tapio.pilot.workspace_answers import response, session
 
 def scope_lines(plan):
     lines = [f"Period: {p.date_from} to {p.date_to}" for p in plan.periods]
+    if not plan.periods and plan.merchants:
+        lines.append("Period: all imported transaction dates")
+    if plan.expense_only:
+        lines.append("Expense view: excludes confirmed TAX and TRANSFER categories.")
     for label, values in [
         ("Context", plan.contexts),
         ("Category", plan.categories),
@@ -118,6 +122,11 @@ def transaction_answer(plan, records, unresolved):
             )
     noun = "tax review candidates" if plan.action == "TAX_SUGGESTION" else "matching transactions"
     limits = []
+    if "TRAVEL" in plan.categories and plan.periods:
+        lines.append(
+            "Dates refer to payments, not travel dates. Tickets paid earlier are outside "
+            "this period; search the full year to find them."
+        )
     for p in plan.periods:
         months = [(a.strftime("%Y-%m"), a, b) for a, b in retrieval.monthly_periods(p)]
         matched = [
@@ -175,7 +184,12 @@ async def supporting_mail(pilot, plan, records, unresolved, directory):
         dict.fromkeys(r["counterparty"] for r in selected if r.get("counterparty"))
     )
     if not names or not plan.periods:
-        return [], ["Name an email sender and date range to check Gmail evidence."], []
+        missing = (
+            "Name the merchant or email sender to check receipts for this date."
+            if plan.periods
+            else "Name an email sender and date range to check Gmail evidence."
+        )
+        return [], [missing], []
     evidence, limits, sources = [], [], []
     checks = 0
     for name in names:
@@ -285,7 +299,7 @@ async def execute(pilot, plan, question, previous, directory):
                 "INTERPRETATION_FAILED",
             )
         # Use existing accepted knowledge/document readers, with typed scope serialized by code.
-        canonical = " ".join([*plan.merchants, *plan.evidence_requirements]).lower()
+        canonical = " ".join([question, *plan.merchants, *plan.evidence_requirements]).lower()
         if len(plan.periods) == 1:
             p = plan.periods[0]
             if p.date_from.month == p.date_to.month:

@@ -1,10 +1,11 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><title>Ask · TAPIO</title>
 <div class="ask-layout"><h1>Ask your records</h1>
 <p class="intro">Get a concise answer backed by your own evidence. Calculations use local data; relevant document or email questions can use Gmail read-only when needed.</p>
-<form id="ask"><label for="question">What would you like to know?</label><textarea id="question" rows="3" maxlength="7600" required aria-describedby="question-help"></textarea><p id="question-help" class="review-guidance">Include a calendar year or month for totals. For email evidence, include the sender and period if you know them.</p><button id="send" type="submit">Ask</button></form>
+<form id="ask"><label for="question">What would you like to know?</label><textarea id="question" rows="3" maxlength="7600" required aria-describedby="question-help"></textarea><p id="question-help" class="review-guidance">Include a calendar year or month for totals. For email evidence, include the sender and period if you know them. To correct a classification: Change Example Shop transaction 22/05/2026 to category OTHER and business context FORESTRY.</p><button id="send" type="submit">Ask</button></form>
 <p id="context-note" class="review-guidance" hidden></p><button id="new-question" type="button" hidden>Start a new question</button>
 <div class="examples" aria-label="Example questions"><button type="button">What were my forestry expenses in 2025?</button><button type="button">Find Paytrail transactions in 2025</button><button type="button">Do I have invoices from Vattenfall in 2025?</button><button type="button">When does my electricity contract end?</button></div>
 <p id="availability" role="status"></p><p id="status" role="status" aria-live="polite"></p>
+<section id="correction" hidden aria-label="Transaction correction"></section>
 <div id="result" hidden aria-label="Answer"><div id="badges" aria-label="Evidence status"></div>
 <section><h2 id="answer-heading" tabindex="-1">Answer</h2><p id="answer"></p><ul id="breakdown"></ul></section>
 <section id="result-records" hidden><div class="result-heading"><h2>Results</h2><div><button id="analyze-attachments" type="button" hidden>Analyze email PDFs</button><button id="export-results" type="button">Export CSV</button></div></div><p id="result-count" class="review-guidance"></p><div id="readable-results"></div></section>
@@ -37,12 +38,45 @@ function show(data){
  evidenceSection('other-details','other-section',{bank_aggregates:details.bank_aggregates||[],forestry_sales:details.forestry_sales||[],comparison:details.comparison||[]});
  document.querySelectorAll('details').forEach(item=>item.open=false);el('feedback-status').textContent='';el('status').textContent='Answer ready.';el('result').hidden=false;document.querySelector('.examples').hidden=true;el('answer-heading').focus();
 }
+const correctionBox=el('correction');let correctionGeneration=0;
+async function correctionRequest(path,body){const r=await fetch('/pilot/corrections/'+path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-Tapio-CSRF':correctionBox.dataset.csrf}:{},body:body?JSON.stringify(body):undefined});const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'Correction failed. Try again.');return d}
+async function prepareCorrection(question){
+ if(!/^\s*(change|correct|update|set)\b/i.test(question))return false;
+ const generation=++correctionGeneration;correctionBox.hidden=false;correctionBox.replaceChildren();
+ const heading=Tapio.node('h2','Correct a transaction');heading.tabIndex=-1;correctionBox.append(heading);const cancel=Tapio.node('button','Cancel correction');cancel.type='button';cancel.onclick=()=>{correctionGeneration++;correctionBox.hidden=true;el('status').textContent='Correction dismissed. No new change requested.'};correctionBox.append(cancel);
+ const notice=Tapio.node('p','Finding matching transactions. Nothing has been changed.');notice.setAttribute('role','status');correctionBox.append(notice);
+ try{
+ const auth=await correctionRequest('session');correctionBox.dataset.csrf=auth.csrf;
+ const data=await correctionRequest('resolve',{question});if(generation!==correctionGeneration)return true;
+ notice.textContent=data.candidates.length?'Select the transaction, then preview your correction.':'No matching transaction. Check the merchant and exact payment date.';
+ if(!data.candidates.length)return true;
+ const fieldset=document.createElement('fieldset');fieldset.append(Tapio.node('legend','Matching transactions'));
+ data.candidates.forEach((c,i)=>{const label=document.createElement('label'),radio=document.createElement('input');radio.type='radio';radio.name='correction-transaction';radio.value=c.id;radio.checked=data.candidates.length===1;
+ label.append(radio,document.createTextNode(`${c.date} · ${c.merchant} · ${Tapio.amount(c.amount)} ${c.currency} · ${c.source_file} · Source ID ${c.source_id}`));fieldset.append(label)});correctionBox.append(fieldset);
+ const proposed=Tapio.node('p','Requested: '+Object.entries(data.fields).map(([k,v])=>Tapio.label(k)+' '+v).join('; ')+'. Other fields stay unchanged. This does not create a rule.');correctionBox.append(proposed);
+ const previewButton=Tapio.node('button','Preview correction');previewButton.type='button';correctionBox.append(previewButton);
+ const detail=document.createElement('div');correctionBox.append(detail);
+ const error=Tapio.node('p');error.setAttribute('role','alert');correctionBox.append(error);
+ fieldset.onchange=()=>{detail.replaceChildren();error.textContent=''};
+ previewButton.onclick=async()=>{error.textContent='';detail.replaceChildren();const selected=fieldset.querySelector('input:checked');if(!selected){error.textContent='Choose the transaction to correct.';return}previewButton.disabled=true;fieldset.disabled=true;
+ try{const transaction_id=selected.value,p=await correctionRequest('preview',{ticket:data.ticket,transaction_id});if(generation!==correctionGeneration)return;
+ detail.append(Tapio.node('p',`${p.transaction.date} · ${p.transaction.merchant} · ${Tapio.amount(p.transaction.amount)} ${p.transaction.currency} · ${p.transaction.source_file}`));const table=document.createElement('table'),head=document.createElement('tr');for(const name of ['Field','Current','After confirmation']){const th=Tapio.node('th',name);th.scope='col';head.append(th)}table.append(head);
+ for(const f of ['category','context']){const tr=document.createElement('tr');tr.append(Tapio.node('td',Tapio.label(f)),Tapio.node('td',p.current[f]||'Not confirmed'),Tapio.node('td',p.would_change[f]?p.would_change[f].new:(p.current[f]||'Not confirmed')+' (unchanged)'));table.append(tr)}detail.append(table);
+ const apply=Tapio.node('button','Confirm and apply correction');apply.type='button';apply.disabled=!p.writes_enabled;detail.append(apply);
+ if(!p.writes_enabled)detail.append(Tapio.node('p','Review writes are disabled. Nothing has been changed.'));
+ apply.onclick=async()=>{cancel.disabled=true;apply.disabled=true;previewButton.disabled=true;fieldset.disabled=true;error.textContent='';try{const result=await correctionRequest('commit',{ticket:data.ticket,transaction_id,commit:{token:p.token,explicit_click:'APPLY_DISPLAYED_CHANGES'}});if(generation!==correctionGeneration)return;cancel.disabled=false;notice.textContent='Correction saved. Future answers use the corrected classification. Source transaction unchanged.';detail.replaceChildren();fieldset.disabled=true;previewButton.hidden=true;session=null;previousQuestion=null;el('context-note').hidden=true;el('new-question').hidden=true;}catch(e){cancel.disabled=false;error.textContent=e.message;previewButton.disabled=false;fieldset.disabled=false;detail.replaceChildren();}};
+ }catch(e){error.textContent=e.message}finally{previewButton.disabled=false;fieldset.disabled=false}};
+ heading.focus();
+ }catch(e){notice.textContent=e.message;notice.setAttribute('role','alert')}
+ return true;
+}
+
 async function checkDatabase(){try{const response=await fetch('/pilot/health');const data=await response.json();el('availability').textContent=response.ok?'':'Local structured data is currently unavailable. Other evidence sources may still be available.';}catch{el('availability').textContent='Connection unavailable. Check that TAPIO is running locally.'}}
 checkDatabase();
 el('analyze-attachments').onclick=()=>{el('question').value='Analyze the PDF attachments from these emails';el('ask').requestSubmit()};
 el('export-results').onclick=()=>{const url=URL.createObjectURL(new Blob([TapioAsk.csv(resultRows)],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='tapio-ask-results.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
-el('new-question').onclick=()=>{session=null;previousQuestion=null;resultRows=[];el('context-note').hidden=true;el('new-question').hidden=true;el('result').hidden=true;document.querySelector('.examples').hidden=false;el('question').value='';el('question').focus()};
+el('new-question').onclick=()=>{correctionGeneration++;correctionBox.hidden=true;session=null;previousQuestion=null;resultRows=[];el('context-note').hidden=true;el('new-question').hidden=true;el('result').hidden=true;document.querySelector('.examples').hidden=false;el('question').value='';el('question').focus()};
 document.querySelectorAll('.examples button').forEach(b=>b.onclick=()=>{el('question').value=b.textContent;el('question').focus()});
-el('ask').onsubmit=async event=>{event.preventDefault();el('send').disabled=true;el('ask').setAttribute('aria-busy','true');el('status').textContent='Checking local evidence and routing relevant sources…';el('result').hidden=true;try{const response=await fetch('/pilot/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:el('question').value,previous_session:session||null})});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Question could not be processed. Please try again.');show(data)}catch(error){el('status').textContent=Tapio.error(error.message)}finally{el('send').disabled=false;el('ask').setAttribute('aria-busy','false')}};
+el('ask').onsubmit=async event=>{event.preventDefault();el('send').disabled=true;el('ask').setAttribute('aria-busy','true');el('status').textContent='Checking local evidence and routing relevant sources…';el('result').hidden=true;correctionGeneration++;correctionBox.hidden=true;try{if(await prepareCorrection(el('question').value)){el('status').textContent='Correction request ready for review.';return}const response=await fetch('/pilot/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:el('question').value,previous_session:session||null})});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Question could not be processed. Please try again.');show(data)}catch(error){el('status').textContent=Tapio.error(error.message)}finally{el('send').disabled=false;el('ask').setAttribute('aria-busy','false')}};
 el('feedback').onsubmit=async event=>{event.preventDefault();try{const response=await fetch('/pilot/feedback/'+session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rating:el('rating').value,note:el('note').value})});el('feedback-status').textContent=response.ok?'Feedback saved privately. Source data is unchanged.':'Feedback could not be saved. Please try again.'}catch{el('feedback-status').textContent='Feedback could not be saved. Check the connection and try again.'}};
 </script></html>

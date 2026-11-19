@@ -31,3 +31,7 @@ textarea{line-height:1.6}table{font-variant-numeric:tabular-nums}th{background:v
 .table-scroll{max-width:100%;min-width:0}.badge{border-radius:5px}.note{border-radius:8px}
 @media(max-width:1000px){.app-header{gap:24px}main{padding:28px}}
 @media(max-width:700px){body::before{height:520px;background-position:center top}.app-header{padding:12px 16px 0;gap:8px}.app-nav a{padding:12px 10px}main{width:calc(100% - 24px);margin:calc(28px + var(--nav-height,100px)) auto 32px;padding:24px 20px 32px;border-radius:12px}h1{font-size:27px}.review-nav{gap:10px 16px;font-size:14px}.local-label{font-size:13px}.field-controls label{min-width:0}}
+
+#correction input[type=radio]{min-height:auto;margin-right:8px;accent-color:var(--accent)}
+#correction fieldset{min-width:0;border:1px solid var(--line);border-radius:8px;padding:12px}
+#correction label{overflow-wrap:anywhere;font-weight:400}

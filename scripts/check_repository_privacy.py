@@ -80,6 +80,9 @@ def scan_text(name, content, denylist=()):
     return findings
 
 
+AGENT_TOOLING_DIRECTORIES = {".agents", ".claude", ".codex"}
+
+
 def scan_repository(root, denylist=(), revision=None, include_untracked=False):
     if revision and include_untracked:
         raise ValueError("REVISION_AND_UNTRACKED_ARE_EXCLUSIVE")
@@ -91,8 +94,12 @@ def scan_repository(root, denylist=(), revision=None, include_untracked=False):
             names += git(root, "ls-files", "-z", "--others", "--exclude-standard").split(b"\0")
     findings = []
     count = 0
+    excluded = 0
     for raw in sorted(set(names) - {b""}):
         name = raw.decode("utf-8", errors="surrogateescape")
+        if Path(name).parts[0] in AGENT_TOOLING_DIRECTORIES:
+            excluded += 1
+            continue
         path = root / name
         # Scan names too: a raw source filename can itself disclose an identifier.
         name_hits = scan_text("[redacted filename]", name, denylist)
@@ -109,7 +116,12 @@ def scan_repository(root, denylist=(), revision=None, include_untracked=False):
             continue  # Working-tree deletion: committed contents remain covered by --revision.
         count += 1
         findings.extend(scan_text(display, content.decode("utf-8", errors="replace"), denylist))
-    return {"files_scanned": count, "findings": findings}
+    return {
+        "files_scanned": count,
+        "findings": findings,
+        "agent_tooling_files_excluded": excluded,
+        "excluded_directories": sorted(AGENT_TOOLING_DIRECTORIES),
+    }
 
 
 def main():

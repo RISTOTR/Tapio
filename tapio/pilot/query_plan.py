@@ -76,6 +76,7 @@ class QueryPlan(Schema):
             "bus",
         ]
     ] = Field(default_factory=list, max_length=5)
+    expense_only: bool = False
     locations: list[str] = Field(default_factory=list, max_length=5)
     periods: list[Period] = Field(default_factory=list, max_length=4)
     metric: Literal[
@@ -120,6 +121,15 @@ def explicit_periods(question, today):
         lambda m: m[2] + " " + str(today.year - (m[1] == "last")),
         q,
     )
+    # Parse full dates before month/year shorthand, which otherwise eats 05/2026.
+    numeric = re.findall(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", q)
+    named = re.findall(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(" + MONTH + r")\s+(20\d{2})\b", q)
+    days = [date(int(y), int(m), int(d)) for d, m, y in numeric]
+    days += [date(int(y), MONTHS[m], int(d)) for d, m, y in named]
+    if days:
+        if len(days) != 1:
+            raise ValueError("Please specify one exact date at a time.")
+        return [Period(date_from=days[0], date_to=days[0])]
     q = re.sub(
         r"\b(0?[1-9]|1[0-2])/(20\d{2})\b",
         lambda m: calendar.month_name[int(m[1])].lower() + " " + m[2],
@@ -169,15 +179,27 @@ def validate_plan(question, plan, today=None):
     explicit = explicit_periods(question, today)
     if explicit:
         plan.periods = explicit
-    elif plan.periods:
+    elif plan.periods and not (plan.merchants and plan.intent == "TRANSACTION_SEARCH"):
         raise ValueError("Please specify the period; I could not validate the interpreted dates.")
     contexts = [
         v for v in ("FORESTRY", "PROPERTY", "PERSONAL") if re.search(r"\b" + v.lower() + r"\b", q)
     ]
     if re.search(r"\bforest\b", q):
         contexts = list(dict.fromkeys([*contexts, "FORESTRY"]))
-    if contexts:
-        plan.contexts = contexts
+    plan.contexts = contexts
+    if not explicit and plan.merchants and plan.intent == "TRANSACTION_SEARCH":
+        plan.periods = []
+        plan.clarification = None
+    plan.locations = [
+        v for v in plan.locations if v.casefold() not in {"gmail", "email", "in gmail"}
+    ]
+    plan.expense_only = bool(re.search(r"\bexpenses?\b", q)) and not bool(
+        re.search(r"\b(tax|taxes|transfers?|cash flow)\b", q)
+    )
+    if re.search(r"\bfind\b.*\btransactions?\b", q) and not re.search(
+        r"\b(expenses?|spent|income|incoming|outgoing)\b", q
+    ):
+        plan.metric = "TRANSACTIONS"
     travel = re.search(r"\b(travel|journeys?|trips?|flights?|trains?|buses|bus)\b", q)
     if travel:
         plan.categories = [TransactionCategory.TRAVEL]
@@ -205,8 +227,35 @@ def validate_plan(question, plan, today=None):
         ):
             if category not in plan.categories:
                 plan.categories.append(category)
+    # Finding receipts for expenses must retain transaction filters. Attachment
+    # analysis is a distinct request, not an inferred synonym for receipt lookup.
+    if (
+        plan.intent == "ATTACHMENT_ANALYSIS"
+        and re.search(r"\b(expenses?|transactions?|payments?)\b", q)
+        and re.search(r"\b(receipts?|invoices?)\b", q)
+        and not re.search(r"\b(attachments?|pdfs?)\b", q)
+    ):
+        plan.intent = "TRANSACTION_SEARCH"
+        plan.action = "FIND_EVIDENCE"
+        plan.evidence_requirements = [r for r in plan.evidence_requirements if r != "ATTACHMENT"]
+    if plan.intent == "DOCUMENT_LOOKUP" and re.search(r"\belectricity contract\b", q):
+        plan.categories = []
+        plan.constraints = [c for c in plan.constraints if c.field != "categories"]
+    plan.constraints = [
+        c
+        for c in plan.constraints
+        if not (
+            (c.field == "contexts" and not contexts)
+            or (c.field == "locations" and "gmail" in c.text.casefold())
+        )
+    ]
     for constraint in plan.constraints:
-        if constraint.text.casefold() not in q:
+        span = constraint.text.strip()
+        # Providers sometimes quote an otherwise verbatim span. Remove only one
+        # matched wrapper; the underlying text must still occur in the question.
+        if len(span) > 2 and (span[0], span[-1]) in {('"', '"'), ("'", "'"), ("“", "”")}:
+            span = span[1:-1]
+        if not span.strip() or span.casefold() not in q:
             raise ValueError("The interpreted constraint was not present in your question.")
         if not getattr(plan, constraint.field):
             raise ValueError(f"Please clarify the requested {constraint.field}: {constraint.text}.")
@@ -227,10 +276,15 @@ def validate_plan(question, plan, today=None):
         plan.intent = "PERIOD_COMPARISON"
         if plan.action != "TAX_SUGGESTION":
             plan.action = "COMPARE"
-    if not plan.periods and plan.intent not in (
-        "ATTACHMENT_ANALYSIS",
-        "DOCUMENT_LOOKUP",
-        "UNSUPPORTED",
+    if (
+        not plan.periods
+        and not (plan.merchants and plan.intent == "TRANSACTION_SEARCH")
+        and plan.intent
+        not in (
+            "ATTACHMENT_ANALYSIS",
+            "DOCUMENT_LOOKUP",
+            "UNSUPPORTED",
+        )
     ):
         plan.clarification = plan.clarification or "Which year or date range should I use?"
     # Remove duplicated semantic labels: slots are filters, not topic tags.
@@ -255,6 +309,10 @@ def validate_plan(question, plan, today=None):
 
 async def interpret(model, question, *, previous=None, today=None):
     today = today or datetime.now(ZoneInfo("Europe/Madrid")).date()
+    if not re.search(
+        r"\b(these|those|them|that payment|this payment|this Paytrail)\b", question, re.I
+    ):
+        previous = None
     payload = {
         "model": MODEL,
         **{k: v for k, v in SETTINGS.items() if k != "max_rounds"},

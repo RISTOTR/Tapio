@@ -118,3 +118,34 @@ def test_repository_privacy_regression():
     root = Path(__file__).resolve().parents[3]
     denylist = load_denylist(root, Path(".private/privacy_denylist.txt"))
     assert scan_repository(root, denylist, include_untracked=True)["findings"] == []
+
+
+@pytest.mark.parametrize("revision", [None, "HEAD"])
+def test_agent_tooling_exclusion_is_explicit_and_root_scoped(repo, revision):
+    secret = "synthetic-exclusion-marker"
+    for directory in (".agents", ".claude", ".codex", "apps/.claude", ".claude-extra"):
+        path = repo / directory / "fixture.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(secret)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "tooling",
+        ],
+        check=True,
+    )
+    result = scan_repository(repo, [secret], revision=revision)
+    assert result["agent_tooling_files_excluded"] == 3
+    assert {f["file"] for f in result["findings"]} == {
+        "apps/.claude/fixture.txt",
+        ".claude-extra/fixture.txt",
+    }

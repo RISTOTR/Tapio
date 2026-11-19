@@ -16,6 +16,7 @@ from tapio.confirmation.api import router as confirmation_router
 from tapio.importing.api import router as import_router
 from tapio.pilot.config import require_mode
 from tapio.pilot.contracts import Ask, Feedback, PilotResponse
+from tapio.pilot.corrections import router as correction_router
 from tapio.pilot.diagnostics import exception_detail
 from tapio.pilot.health import DATABASE_HELP, database_available
 from tapio.pilot.service import Pilot
@@ -191,3 +192,6 @@ def suggestion_feedback(card_id: str, body: FeedbackInput):
 app.include_router(confirmation_router)
 
 app.include_router(import_router)
+
+
+app.include_router(correction_router)

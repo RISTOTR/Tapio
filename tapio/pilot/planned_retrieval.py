@@ -1,6 +1,7 @@
 """Read-only plan execution. Classification is current review state, never tax treatment."""
 
 import calendar
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -21,7 +22,9 @@ def aliases(name):
         names = [canonical, *entry.aliases, *entry.bank_descriptors]
         if normalized in {normalize_subject(n) for n in names}:
             return names
-    return [name]
+    # Only legal company suffixes; preserve whole-token boundaries, not fuzzy names.
+    base = re.sub(r"(?:\s+(?:oyj?|ab|ltd|limited|inc)\.?)+$", "", name.strip(), flags=re.I)
+    return list(dict.fromkeys([name, base])) if base else [name]
 
 
 def concept_terms(concept):
@@ -42,9 +45,13 @@ def included(row, plan):
     """Independent post-retrieval scope check; do not broaden on zero matches."""
     day = date.fromisoformat(row["booking_date"])
     return (
-        any(p.date_from <= day <= p.date_to for p in plan.periods)
+        (
+            any(p.date_from <= day <= p.date_to for p in plan.periods)
+            or (not plan.periods and bool(plan.merchants))
+        )
         and (not plan.contexts or row["business_context"] in plan.contexts)
         and (not plan.categories or row["category"] in plan.categories)
+        and (not plan.expense_only or row["category"] not in {"TAX", "TRANSFER"})
         and (plan.action != "TAX_SUGGESTION" or Decimal(row["amount"]) < 0)
     )
 

@@ -103,6 +103,9 @@ def review_state_data(tx, legacy, latest):
 
 class ConfirmationService:
     def __init__(self, session_factory, batch, *, signing_key=None, enabled=None):
+        correction = batch.get("version") == "CORRECTION_REVIEW_V1"
+        if correction and len(batch["cards"]) != 1:
+            raise ValueError("CORRECTION_REQUIRES_ONE_TRANSACTION")
         minimal = batch.get("version") == "MINIMAL_REVIEW_V1"
         persistent = minimal or batch.get("version") == "PERSISTENT_CONFIRMATION_V1"
         bounded = persistent or batch.get("version") == "BOUNDED_CONFIRMATION_V1"
@@ -125,6 +128,12 @@ class ConfirmationService:
         if len({c["transaction"]["id"] for c in batch["cards"]}) != len(batch["cards"]):
             raise ValueError("DUPLICATE_TRANSACTION")
         for card in batch["cards"]:
+            if correction:
+                if not card.get("source_stable_id") or card.get("reasons") != [
+                    "EXPLICIT_USER_CORRECTION"
+                ]:
+                    raise ValueError("INVALID_CORRECTION_ALLOWLIST")
+                continue
             if general:
                 if (
                     not card.get("source_stable_id")
@@ -232,6 +241,7 @@ class ConfirmationService:
             "BOUNDED_CONFIRMATION_V1",
             "PERSISTENT_CONFIRMATION_V1",
             "MINIMAL_REVIEW_V1",
+            "CORRECTION_REVIEW_V1",
         } and digest(card) != self.card_versions.get(card["card_id"]):
             raise ValueError("STALE_STATE_EVIDENCE_CHANGED")
         check = getattr(self, "evidence_check", None)
