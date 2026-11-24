@@ -1,24 +1,39 @@
 """Validate once, execute bounded tools, and present scoped evidence without a second planner."""
 
 import asyncio
-import json
 import re
 import time
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from integrations.gmail.models import Search
 from tapio.pilot import planned_retrieval as retrieval
 from tapio.pilot.attachment_answers import analyze_attachments
 from tapio.pilot.config import readonly_engine, readonly_session
-from tapio.pilot.evidence_routing import accepted_answer, gmail_lookup, local_evidence
-from tapio.pilot.query_plan import QueryPlan, interpret
+from tapio.pilot.conversation import (
+    contract_followup,
+    exclusion_followup,
+    followup_plan,
+    is_followup,
+    load_previous,
+    period_followup_question,
+    same_period,
+    selection_exclusions,
+)
+from tapio.pilot.evidence_routing import (
+    accepted_answer,
+    gmail_lookup,
+    local_evidence,
+    needs_gmail_auth,
+)
+from tapio.pilot.invoice_comparison import add_evidence_comparison, compare_invoices, reference_key
+from tapio.pilot.query_plan import Period, QueryPlan, interpret, selected_attachment_request
 from tapio.pilot.workspace_answers import response, session
 
 
 def scope_lines(plan):
     lines = [f"Period: {p.date_from} to {p.date_to}" for p in plan.periods]
-    if not plan.periods and plan.merchants:
+    if not plan.periods and plan.intent in {"TRANSACTION_SEARCH", "PERIOD_COMPARISON"}:
         lines.append("Period: all imported transaction dates")
     if plan.expense_only:
         lines.append("Expense view: excludes confirmed TAX and TRANSFER categories.")
@@ -31,6 +46,8 @@ def scope_lines(plan):
     ]:
         if values:
             lines.append(label + ": " + ", ".join(values))
+    for e in plan.exclusions:
+        lines.append("Exclude: " + " / ".join(v for v in [e.context, e.category] if v))
     return lines
 
 
@@ -120,12 +137,59 @@ def transaction_answer(plan, records, unresolved):
                 f"{p.date_from} to {p.date_to}: {len(amounts)} transactions, "
                 f"{total:.2f} {currency}."
             )
+    # Group arithmetic uses the same scoped rows as the displayed evidence.
+    scopes = [
+        (
+            f"{p.date_from} to {p.date_to}",
+            [r for r in records if str(p.date_from) <= r["booking_date"] <= str(p.date_to)],
+        )
+        for p in plan.periods
+    ] or [("All imported dates", records)]
+    for label, rows in scopes:
+        for currency in sorted({r["currency"] for r in rows}):
+            selected = [r for r in rows if r["currency"] == currency]
+
+            def amount(items):
+                return sum(
+                    (
+                        max(-Decimal(r["amount"]), Decimal(0))
+                        if plan.metric == "OUTFLOW"
+                        else Decimal(r["amount"])
+                        for r in items
+                    ),
+                    Decimal(0),
+                )
+
+            total = amount(selected)
+            if not plan.periods:
+                lines.append(f"{label}: {len(selected)} transactions, {total:.2f} {currency}.")
+            if {"ELECTRICITY", "GRID_DISTRIBUTION"}.issubset(set(plan.categories)):
+                for category, title in [
+                    ("ELECTRICITY", "Energy supplier"),
+                    ("GRID_DISTRIBUTION", "Grid distribution"),
+                ]:
+                    subtotal = amount([r for r in selected if r["category"] == category])
+                    lines.append(f"{label} — {title}: {subtotal:.2f} {currency}.")
+            for merchant in plan.share_merchants:
+                subset = [
+                    r
+                    for r in selected
+                    if retrieval.matching_terms(
+                        {"counterparty": r["counterparty"]}, retrieval.aliases(merchant)
+                    )
+                ]
+                subtotal = amount(subset)
+                share = f"{subtotal / total * 100:.1f}%" if total else "undefined (zero total)"
+                lines.append(
+                    f"{label} — {merchant}: {subtotal:.2f} of {total:.2f} {currency}, {share}."
+                )
     noun = "tax review candidates" if plan.action == "TAX_SUGGESTION" else "matching transactions"
     limits = []
     if "TRAVEL" in plan.categories and plan.periods:
         lines.append(
             "Dates refer to payments, not travel dates. Tickets paid earlier are outside "
-            "this period; search the full year to find them."
+            "this period. Search forestry flights, trains and buses across the full year "
+            "to check earlier ticket payments (for example Finnair)."
         )
     for p in plan.periods:
         months = [(a.strftime("%Y-%m"), a, b) for a, b in retrieval.monthly_periods(p)]
@@ -194,11 +258,36 @@ async def supporting_mail(pilot, plan, records, unresolved, directory):
     checks = 0
     for name in names:
         # Only a source/user-derived sender term, never model-generated Gmail operators.
-        sender = re.sub(r"[^\w@.-]", "", name.split()[0])
+        # Official sender domains: vr.fi/asiakaspalvelu and OnniBus developer contact.
+        sender_domains = {
+            "vr": "vr.fi",
+            "vr oy": "vr.fi",
+            "onnibuscom oy": "onnibus.com",
+            "onnibus.com oy": "onnibus.com",
+            "onnibus": "onnibus.com",
+        }
+        sender = sender_domains.get(name.casefold(), re.sub(r"[^\w@.-]", "", name.split()[0]))
         if len(sender) < 3:
             limits.append(f"A more specific email sender is needed for {name}.")
             continue
-        for p in plan.periods:
+        periods = plan.periods
+        dates = sorted(
+            {
+                date.fromisoformat(r["booking_date"])
+                for r in selected
+                if r.get("booking_date") and r.get("counterparty") == name
+            }
+        )
+        if dates:
+            windows = []
+            for day in dates:
+                start, end = day - timedelta(days=7), day + timedelta(days=7)
+                if windows and start <= windows[-1][1]:
+                    windows[-1] = (windows[-1][0], max(end, windows[-1][1]))
+                else:
+                    windows.append((start, end))
+            periods = [Period(date_from=start, date_to=end) for start, end in windows]
+        for p in periods:
             if checks >= 3:
                 limits.append(
                     "Checked three sender/period combinations; narrow the scope to "
@@ -215,12 +304,25 @@ async def supporting_mail(pilot, plan, records, unresolved, directory):
             )
             try:
                 found, limited = await gmail_lookup(search, directory)
-            except Exception:
+            except Exception as exc:
+                reason = (
+                    "Gmail authorization needs reconnecting; renew the existing read-only "
+                    "authorization and retry."
+                    if needs_gmail_auth(exc)
+                    else "The Gmail lookup could not complete; check the connection and retry."
+                )
                 limits.append(
-                    f"Gmail evidence for {name} is unavailable; this is not a no-match result."
+                    f"Gmail evidence for {name} is unavailable. {reason} "
+                    "This is not a no-match result."
                 )
                 sources.append(
-                    {"label": "Gmail read-only", "status": "unavailable", "detail": name}
+                    {
+                        "label": "Gmail read-only",
+                        "status": "authentication required"
+                        if needs_gmail_auth(exc)
+                        else "unavailable",
+                        "detail": reason,
+                    }
                 )
                 continue
             for record in found:
@@ -246,6 +348,36 @@ async def supporting_mail(pilot, plan, records, unresolved, directory):
 async def execute(pilot, plan, question, previous, directory):
     if plan.clarification:
         return failed(plan.clarification, "INTERPRETATION_FAILED")
+    if is_followup(question) and re.search(r"customer|account.holder", question, re.I):
+        saved = (previous or {}).get("records", [])
+        docs = [r for r in saved if r.get("source") == "Email PDF attachment"]
+        if not docs:
+            docs = [
+                r
+                for r in ((previous or {}).get("focus") or {}).get("records", [])
+                if r.get("source") == "Email PDF attachment"
+            ]
+        if not docs:
+            return failed(
+                "The selected invoices have no extracted customer fields yet. "
+                "Analyze their PDF attachments first.",
+                "INTERPRETATION_FAILED",
+            )
+        lines = [
+            f"{r.get('filename', 'PDF')}: {r.get('customer') or 'Customer not extracted'}."
+            for r in docs
+        ]
+        return response(
+            " ".join(lines),
+            records=docs,
+            sources=[
+                {
+                    "label": "Previously selected PDFs",
+                    "status": "used",
+                    "detail": "Customer named in each saved document; no new search.",
+                }
+            ],
+        )
     if plan.intent == "UNSUPPORTED":
         return failed(
             "I could not represent this request with the available evidence tools. "
@@ -253,9 +385,17 @@ async def execute(pilot, plan, question, previous, directory):
             "INTERPRETATION_FAILED",
         )
     if plan.intent == "ATTACHMENT_ANALYSIS":
-        selected = [
-            r for r in (previous or {}).get("records", []) if r.get("source") == "Gmail read-only"
-        ]
+        selected = (
+            [r for r in (previous or {}).get("records", []) if r.get("source") == "Gmail read-only"]
+            if selected_attachment_request(question)
+            else []
+        )
+        if selected_attachment_request(question) and not selected:
+            return failed(
+                "There are no saved emails selected for this follow-up. "
+                "Find the intended merchant's emails first, then ask to check their PDFs.",
+                "INTERPRETATION_FAILED",
+            )
         if not selected:
             selected, limits, sources = await supporting_mail(pilot, plan, [], [], directory)
             if not selected:
@@ -281,7 +421,9 @@ async def execute(pilot, plan, question, previous, directory):
                 ]
             }
         )
-        return result
+        # Retain the exact message selection for another attachment follow-up.
+        result.supporting_records.extend(selected)
+        return add_evidence_comparison(result)
     if plan.metric in {"SOLAR_EXPORT", "SOLAR_PRODUCTION", "CONSUMPTION"}:
         if plan.contexts or plan.categories or plan.merchants or plan.locations or plan.concepts:
             return failed(
@@ -290,8 +432,75 @@ async def execute(pilot, plan, question, previous, directory):
                 "INTERPRETATION_FAILED",
             )
         records, missing = await asyncio.to_thread(load_energy, plan)
-        return energy_answer(plan, records, missing)
+        result = energy_answer(plan, records, missing)
+        if (
+            plan.metric in {"SOLAR_EXPORT", "SOLAR_PRODUCTION"}
+            and "consumption" in question.lower()
+        ):
+            consumption_plan = plan.model_copy(update={"metric": "CONSUMPTION"})
+            consumption, consumption_missing = await asyncio.to_thread(
+                load_energy, consumption_plan
+            )
+            result.supporting_records.extend(consumption)
+            result.limitations.extend(
+                ["Missing consumption coverage: " + "; ".join(consumption_missing)]
+                if consumption_missing
+                else []
+            )
+            for p in plan.periods:
+
+                def scoped(items, p=p):
+                    return [
+                        r
+                        for r in items
+                        if str(p.date_from) <= r["date_from"] <= r["date_to"] <= str(p.date_to)
+                    ]
+
+                exports, usage = scoped(records), scoped(consumption)
+
+                # Ratios require identical measured coverage; never mix partial periods.
+                def dates(items):
+                    return {(r["date_from"], r["date_to"]) for r in items}
+
+                if not exports or dates(exports) != dates(usage) or missing or consumption_missing:
+                    result.limitations.append(
+                        f"{p.date_from} to {p.date_to}: ratio unavailable "
+                        "without complete matching coverage."
+                    )
+                    continue
+                numerator = sum((Decimal(r["total"]) for r in exports), Decimal(0))
+                denominator = sum((Decimal(r["total"]) for r in usage), Decimal(0))
+                ratio = (
+                    f"{numerator / denominator * 100:.1f}%"
+                    if denominator
+                    else "undefined (zero consumption)"
+                )
+                result.relevant_breakdown.append(
+                    f"{p.date_from} to {p.date_to}: consumption {denominator:.3f} kWh; "
+                    f"export / consumption {ratio}. "
+                    "This is not total solar production or self-sufficiency."
+                )
+        return result
     if plan.intent == "DOCUMENT_LOOKUP":
+        if contract_followup(question):
+            saved = ((previous or {}).get("focus") or {}).get("records", [])
+            direct = accepted_answer(question, saved)
+            return response(
+                direct
+                or "The selected contract evidence does not establish a single answer "
+                "to that question. Specify the contract or the field to check.",
+                records=saved,
+                sources=[
+                    {
+                        "label": "Previously selected contract evidence",
+                        "status": "used",
+                        "detail": "Saved contract scope; no new Gmail search.",
+                    }
+                ],
+                limits=[]
+                if direct
+                else ["A single accepted contract date could not be established."],
+            )
         if plan.contexts or plan.categories or plan.locations or plan.concepts:
             return failed(
                 "Please identify a transaction to associate these document constraints "
@@ -343,6 +552,35 @@ async def execute(pilot, plan, question, previous, directory):
     if plan.intent == "PAYMENT_PURPOSE" and not plan.periods:
         return failed("Which payment date or period should I inspect?", "INTERPRETATION_FAILED")
     records, unresolved = await asyncio.to_thread(load_transactions, plan)
+    if is_followup(question) and not same_period(question):
+        focus = (previous or {}).get("focus") or {}
+        ids = {r["transaction_id"] for r in focus.get("records", []) if r.get("transaction_id")}
+        records = [r for r in records if r["transaction_id"] in ids]
+        unresolved = [r for r in unresolved if r["transaction_id"] in ids]
+        if exclusion_followup(question):
+            _, merchants = selection_exclusions(question, focus)
+            records = [r for r in records if r.get("counterparty") not in merchants]
+            unresolved = [r for r in unresolved if r.get("counterparty") not in merchants]
+    if is_followup(question) and re.search(
+        r"non.finnish|spanish|foreign.*(?:card|account)", question, re.I
+    ):
+        candidates = [r for r in records if r.get("source_system") == "SAMPO"]
+        return response(
+            f"{len(candidates)} of the selected transactions came through the Sampo import.",
+            records=candidates,
+            limits=[
+                "Sampo identifies the import source, not the bank's country. "
+                "Check the displayed source account; "
+                "non-Finnish origin is not independently verified."
+            ],
+            sources=[
+                {
+                    "label": "Imported transaction provenance",
+                    "status": "used",
+                    "detail": "Source system and account from the original import.",
+                }
+            ],
+        )
     result = transaction_answer(plan, records, unresolved)
     needs_mail = (
         "EMAIL" in plan.evidence_requirements
@@ -352,7 +590,10 @@ async def execute(pilot, plan, question, previous, directory):
         )
         or (plan.intent == "PAYMENT_PURPOSE" and bool(records))
         or bool(unresolved)
+        or (plan.evidence_mode == "INSPECT" and bool(records))
     )
+    if plan.evidence_mode == "GAPS" and "EMAIL" not in plan.evidence_requirements:
+        needs_mail = False
     if plan.intent == "PAYMENT_PURPOSE" and records:
         for record in records:
             if record.get("message"):
@@ -371,12 +612,13 @@ async def execute(pilot, plan, question, previous, directory):
                     "change classification."
                 )
     mail = []
+    attachment_lines = []
     if needs_mail:
         mail, limits, sources = await supporting_mail(pilot, plan, records, unresolved, directory)
         result.supporting_records.extend(mail)
         result.sources.extend(sources)
         result.limitations.extend(limits)
-        if mail and "ATTACHMENT" in plan.evidence_requirements:
+        if mail and ("ATTACHMENT" in plan.evidence_requirements or plan.evidence_mode == "INSPECT"):
             attachments = await analyze_attachments(pilot, question, mail)
             for item in attachments.supporting_records:
                 if "excerpt" in item:
@@ -388,7 +630,13 @@ async def execute(pilot, plan, question, previous, directory):
                     )
             result.supporting_records.extend(attachments.supporting_records)
             result.sources.extend(attachments.sources)
-            result.relevant_breakdown.extend(attachments.relevant_breakdown)
+            result.limitations.extend(
+                s
+                for s in attachments.limitations
+                if not s.startswith(("Printed VAT", "Solar export"))
+            )
+            attachment_lines = attachments.relevant_breakdown
+            result.relevant_breakdown.extend(attachment_lines)
 
         if mail:
             result.evidence_summary.append(
@@ -406,12 +654,18 @@ async def execute(pilot, plan, question, previous, directory):
                 m
                 for m in mail
                 if len(reference) >= 6
-                and re.search(r"(?<!\w)" + re.escape(reference) + r"(?!\w)", m.get("excerpt", ""))
+                and re.search(
+                    r"(?<!\w)" + re.escape(reference_key(reference)) + r"(?!\w)",
+                    m.get("excerpt", ""),
+                )
             ]
             local_links = [
                 e for e in row.get("supporting_evidence", []) if e.get("link_status") == "CONFIRMED"
             ]
-            if linked_mail or (local_links and "EMAIL" not in plan.evidence_requirements):
+            if linked_mail or (
+                local_links
+                and (plan.evidence_mode != "REQUIRE" or "EMAIL" not in plan.evidence_requirements)
+            ):
                 row["supporting_evidence"] = [*row.get("supporting_evidence", []), *linked_mail]
                 if linked_mail:
                     row["evidence_match"] = "Exact bank reference found in email text"
@@ -423,15 +677,80 @@ async def execute(pilot, plan, question, previous, directory):
                         "missing": "No linked evidence establishes document coverage.",
                     }
                 )
-        scoped = transaction_answer(plan, matched, [*unresolved, *unknown])
+        displayed = [*matched, *unknown] if plan.evidence_mode == "REQUIRE" else matched
+        for row in unknown:
+            row["check_next"] = "No confirmed receipt link; candidate emails are shown separately."
+        if plan.evidence_mode in {"INSPECT", "GAPS"}:
+            for row in unknown:
+                row["check_next"] = (
+                    "No confirmed invoice or exact-reference email link; "
+                    "check the receipt and purpose."
+                )
+            displayed = unknown if plan.evidence_mode == "GAPS" else [*matched, *unknown]
+        scoped = transaction_answer(
+            plan,
+            displayed,
+            unresolved if plan.evidence_mode != "REQUIRE" else [*unresolved, *unknown],
+        )
+        if plan.evidence_mode == "REQUIRE" and unknown:
+            text = (
+                f"{len(records)} payments found; {len(matched)} have linked evidence. "
+                f"{len(mail)} candidate emails retrieved; unlinked messages do not yet "
+                "establish receipt coverage for the remaining payments."
+            )
+            scoped = scoped.model_copy(
+                update={
+                    "answer": text,
+                    "direct_answer": text,
+                    "failure_category": "MATCHING_RECORDS_INSUFFICIENT_EVIDENCE"
+                    if not matched
+                    else scoped.failure_category,
+                }
+            )
+        if plan.evidence_mode == "GAPS":
+            text = f"{len(unknown)} candidate transactions have weak or missing linked evidence."
+            scoped = scoped.model_copy(update={"answer": text, "direct_answer": text})
+            scoped.limitations.append(
+                "These are classification-based candidates. A specific planting trip "
+                "is not established without trip dates or linked trip evidence."
+                if "planting" in question.lower()
+                else "Missing linked evidence does not prove that a receipt does not exist."
+            )
+        elif plan.evidence_mode == "INSPECT" and unknown:
+            scoped.limitations.append(
+                "The bank payments exist, but the available links do not yet explain "
+                "their separate purposes. Check invoice numbers and billing periods."
+            )
         result = scoped.model_copy(
             update={
                 "sources": result.sources,
-                "supporting_records": [*matched, *mail],
+                "supporting_records": [
+                    *displayed,
+                    *[r for r in result.supporting_records if not r.get("transaction_id")],
+                ],
+                "relevant_breakdown": [*scoped.relevant_breakdown, *attachment_lines],
                 "limitations": [*scoped.limitations, *result.limitations],
                 "evidence_summary": result.evidence_summary,
             }
         )
+    if plan.evidence_mode == "INSPECT" and records:
+        comparison, matched_ids = compare_invoices(records, result.supporting_records)
+        if comparison:
+            result.relevant_breakdown.extend(comparison)
+            if len(matched_ids) == len(records) and len(records) > 1:
+                text = "The payments match separate invoices by reference and amount. " + " ".join(
+                    comparison
+                )
+                result = result.model_copy(update={"answer": text, "direct_answer": text})
+                result = result.model_copy(
+                    update={
+                        "limitations": [
+                            s
+                            for s in result.limitations
+                            if not s.startswith("The bank payments exist")
+                        ]
+                    }
+                )
     if plan.intent == "PAYMENT_PURPOSE" and records:
         result = result.model_copy(
             update={
@@ -439,7 +758,7 @@ async def execute(pilot, plan, question, previous, directory):
                 "direct_answer": "Matching payments and purpose evidence are shown below.",
             }
         )
-    return result
+    return add_evidence_comparison(result)
 
 
 async def answer_planned(pilot, question, previous_session=None, *, planner=interpret):
@@ -448,23 +767,17 @@ async def answer_planned(pilot, question, previous_session=None, *, planner=inte
     previous = None
     plan = None
     model = None
-    if previous_session:
-        path = pilot.history.directory(previous_session) / "question.json"
-        if path.exists():
-            saved = json.loads(path.read_text())
-            previous = {
-                "question": saved["question"],
-                "plan": saved.get("query_plan"),
-                "records": saved.get("response", {}).get("supporting_records", []),
-            }
+    previous = load_previous(pilot.history, previous_session)
     try:
         model = pilot.model_factory(pilot.history.directory(current.id) / "protocol")
         # Only previous scope goes to the interpreter; private evidence stays local.
-        plan = await planner(
-            model,
-            question,
-            previous={k: v for k, v in previous.items() if k != "records"} if previous else None,
-        )
+        plan = None if selected_attachment_request(question) else followup_plan(question, previous)
+        if plan is None:
+            plan = await planner(
+                model,
+                period_followup_question(question, previous) if same_period(question) else question,
+                previous={k: previous[k] for k in ("question", "plan")} if previous else None,
+            )
         plan = QueryPlan.model_validate(plan)
     except Exception:
         result = failed(
@@ -536,6 +849,22 @@ async def answer_planned(pilot, question, previous_session=None, *, planner=inte
         {
             "question": question,
             "previous_session": previous_session,
+            "conversation_focus": (
+                previous.get("focus")
+                if previous
+                and is_followup(question)
+                and (
+                    (not same_period(question) and not exclusion_followup(question))
+                    or result.failure_category not in (None, "NO_MATCHING_RECORDS")
+                )
+                else {
+                    "question": question,
+                    "plan": plan.model_dump(mode="json"),
+                    "records": result.supporting_records,
+                }
+                if plan and result.failure_category in (None, "NO_MATCHING_RECORDS")
+                else None
+            ),
             "query_plan": plan.model_dump(mode="json") if plan else None,
             "response": result.model_dump(mode="json"),
         },

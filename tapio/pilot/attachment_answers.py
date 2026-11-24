@@ -12,6 +12,7 @@ from data_pipeline.ingest.documents import extract
 from integrations.gmail.auth import GmailSettings
 from integrations.gmail.models import Download, MessageID
 from tapio.pilot.evidence_routing import gmail_lookup, gmail_query, needs_gmail_auth
+from tapio.pilot.invoice_comparison import document_identity, final_bill_facts
 from tapio.tools.gmail import gmail_session, register_gmail
 from tapio.tools.registry import Registry
 
@@ -42,6 +43,11 @@ def analyze_download(value):
     try:
         parsed = parser_for(pages).parse(pages)
     except (DocumentError, ValueError):
+        facts = final_bill_facts(pages)
+        if facts:
+            return [{**provenance, **facts, **document_identity(pages)}], [
+                f"{download.filename}: final bill {facts['total_eur']} EUR; printed totals checked."
+            ]
         text = "\n\n".join(f"Page {n}:\n{p}" for n, p in enumerate(pages, 1))
         return [
             {
@@ -57,6 +63,7 @@ def analyze_download(value):
         ]
     record = {
         **provenance,
+        **document_identity(pages),
         "subject": download.filename,
         "vendor": parsed.vendor,
         "date": str(parsed.document_date),
@@ -67,7 +74,11 @@ def analyze_download(value):
     if parsed.bill:
         bill = parsed.bill
         record.update(
+            customer=bill.customer,
+            due_date=str(bill.due_date),
+            invoice_type="Invoice",
             invoice_number=bill.invoice_number,
+            payment_reference=bill.reference,
             total_eur=str(bill.total_eur),
             vat_eur=str(bill.vat_eur),
             subtotal_eur=str(bill.subtotal_eur),

@@ -43,6 +43,11 @@ class Constraint(Schema):
     ]
 
 
+class ClassificationExclusion(Schema):
+    category: TransactionCategory | None = None
+    context: Literal["FORESTRY", "PROPERTY", "PERSONAL", "MIXED", "UNKNOWN"] | None = None
+
+
 class QueryPlan(Schema):
     model_config = ConfigDict(frozen=False, validate_assignment=True)
     intent: Literal[
@@ -76,7 +81,10 @@ class QueryPlan(Schema):
             "bus",
         ]
     ] = Field(default_factory=list, max_length=5)
+    exclusions: list[ClassificationExclusion] = Field(default_factory=list, max_length=15)
+    evidence_mode: Literal["REQUIRE", "INSPECT", "GAPS"] = "REQUIRE"
     expense_only: bool = False
+    share_merchants: list[str] = Field(default_factory=list, max_length=5)
     locations: list[str] = Field(default_factory=list, max_length=5)
     periods: list[Period] = Field(default_factory=list, max_length=4)
     metric: Literal[
@@ -176,18 +184,71 @@ def validate_plan(question, plan, today=None):
     plan = QueryPlan.model_validate(plan).model_copy(deep=True)
     today = today or datetime.now(ZoneInfo("Europe/Madrid")).date()
     q = question.casefold()
+    plan.share_merchants = []
+    exclusion = re.search(r"\b(?:don['’]t include|do not include|exclude|excluding|except)\b", q)
+    positive = q[: exclusion.start()] if exclusion else q
+    plan.exclusions = []
+    if exclusion:
+        for clause in re.split(r",|\bor\b|\band\b", q[exclusion.end() :]):
+            if not clause.strip():
+                continue
+            categories = [
+                c
+                for c in TransactionCategory
+                if re.search(r"\b" + c.value.lower().replace("_", " ") + r"\b", clause)
+            ]
+            excluded_contexts = [
+                c
+                for c in ("FORESTRY", "PROPERTY", "PERSONAL")
+                if re.search(r"\b" + c.lower() + r"\b", clause)
+            ]
+            if len(excluded_contexts) > 1 or not (categories or excluded_contexts):
+                raise ValueError("Please express each exclusion as a category or business context.")
+            plan.exclusions.extend(
+                ClassificationExclusion(
+                    category=c, context=excluded_contexts[0] if excluded_contexts else None
+                )
+                for c in (categories or [None])
+            )
+    plan.evidence_mode = "REQUIRE"
+    if re.search(r"\b(?:weak|missing|insufficient)\b.*\bevidence\b", q):
+        plan.evidence_mode = "GAPS"
+        plan.action = "FIND_EVIDENCE"
+        plan.intent = "TRANSACTION_SEARCH"
+        if not plan.evidence_requirements:
+            plan.evidence_requirements = ["PURPOSE"]
+    elif re.search(r"\b(?:inspect|why)\b", positive):
+        plan.evidence_mode = "INSPECT"
+        plan.action = "FIND_EVIDENCE"
+        if re.search(r"\btransactions?\b", positive):
+            plan.intent = "TRANSACTION_SEARCH"
+    tax_suggestion = bool(
+        re.search(r"\b(?:deduct\w*|tax suggestions?|tax.relevant|relevant for tax)\b", positive)
+    )
+    if tax_suggestion:
+        plan.action = "TAX_SUGGESTION"
+        plan.concepts = [c for c in plan.concepts if c != "tax"]
+        plan.constraints = [c for c in plan.constraints if c.field != "concepts"]
     explicit = explicit_periods(question, today)
     if explicit:
+        if re.search(r"\b(so far|year to date)\b", q):
+            explicit = [
+                Period(date_from=p.date_from, date_to=min(p.date_to, today))
+                for p in explicit
+                if p.date_from <= today
+            ]
         plan.periods = explicit
-    elif plan.periods and not (plan.merchants and plan.intent == "TRANSACTION_SEARCH"):
+    elif plan.periods and plan.intent not in {"TRANSACTION_SEARCH", "PERIOD_COMPARISON"}:
         raise ValueError("Please specify the period; I could not validate the interpreted dates.")
     contexts = [
-        v for v in ("FORESTRY", "PROPERTY", "PERSONAL") if re.search(r"\b" + v.lower() + r"\b", q)
+        v
+        for v in ("FORESTRY", "PROPERTY", "PERSONAL")
+        if re.search(r"\b" + v.lower() + r"\b", positive)
     ]
-    if re.search(r"\bforest\b", q):
+    if re.search(r"\bforest\b", positive):
         contexts = list(dict.fromkeys([*contexts, "FORESTRY"]))
     plan.contexts = contexts
-    if not explicit and plan.merchants and plan.intent == "TRANSACTION_SEARCH":
+    if not explicit and plan.intent in {"TRANSACTION_SEARCH", "PERIOD_COMPARISON"}:
         plan.periods = []
         plan.clarification = None
     plan.locations = [
@@ -267,18 +328,20 @@ def validate_plan(question, plan, today=None):
         plan.merchants = [
             m for m in plan.merchants if m.casefold() not in {x.casefold() for x in plan.locations}
         ]
-    if re.search(r"\b(deduct\w*|tax suggestions?|tax.relevant)\b", q):
+    if tax_suggestion:
         plan.action = "TAX_SUGGESTION"
         if not contexts:
             plan.contexts = []
             plan.clarification = "Which context should I use: forestry, property, or personal?"
+    if plan.periods and plan.metric in {"SOLAR_EXPORT", "SOLAR_PRODUCTION", "CONSUMPTION"}:
+        plan.clarification = None
     if len(plan.periods) > 1:
         plan.intent = "PERIOD_COMPARISON"
         if plan.action != "TAX_SUGGESTION":
             plan.action = "COMPARE"
     if (
         not plan.periods
-        and not (plan.merchants and plan.intent == "TRANSACTION_SEARCH")
+        and plan.intent not in {"TRANSACTION_SEARCH", "PERIOD_COMPARISON"}
         and plan.intent
         not in (
             "ATTACHMENT_ANALYSIS",
@@ -294,7 +357,8 @@ def validate_plan(question, plan, today=None):
         "TAX": r"tax payments?|tax paid|paid tax|verohallinto",
         "FORESTRY_SERVICE": r"forestry services?|metsanhoito",
         "MAINTENANCE": r"maintenance|repair",
-        "OTHER": r"other category",
+        "OTHER": r"other category|classified as other",
+        "GRID_DISTRIBUTION": r"grid (?:distribution|charges|costs)",
         "UNKNOWN": r"unknown category|unclassified",
     }
     plan.categories = [
@@ -302,13 +366,67 @@ def validate_plan(question, plan, today=None):
         for c in plan.categories
         if re.search(category_terms.get(c.value, c.value.lower().replace("_", " ")), q)
     ]
+    classified = re.search(r"currently classified as (\w+)", q)
+    if classified and classified[1].upper() in {c.value for c in TransactionCategory}:
+        plan.categories = [TransactionCategory(classified[1].upper())]
+        if travel and plan.categories != [TransactionCategory.TRAVEL]:
+            plan.concepts = list(dict.fromkeys([*plan.concepts, "travel"]))
+    if re.search(r"\bgrid (charges|costs|distribution)\b", q):
+        if TransactionCategory.GRID_DISTRIBUTION not in plan.categories:
+            plan.categories.append(TransactionCategory.GRID_DISTRIBUTION)
+    if re.search(r"\b(percentage|percent|share)\b", q) and plan.merchants:
+        plan.share_merchants = plan.merchants
+        plan.merchants = []
     if "TRAVEL" in plan.categories:
         plan.concepts = [c for c in plan.concepts if c != "travel"]
+    if exclusion:
+        # Excluded words cannot create positive category/concept/merchant filters.
+        plan.categories = [
+            c
+            for c in plan.categories
+            if re.search(category_terms.get(c.value, c.value.lower().replace("_", " ")), positive)
+        ]
+        plan.concepts = [c for c in plan.concepts if c in positive]
+        plan.merchants = [m for m in plan.merchants if m.casefold() in positive]
+    if re.search(r"\belectricity grid\b", positive):
+        plan.categories = [c for c in plan.categories if c != TransactionCategory.ELECTRICITY]
+        if TransactionCategory.GRID_DISTRIBUTION not in plan.categories:
+            plan.categories.append(TransactionCategory.GRID_DISTRIBUTION)
+        if re.search(r"\belectricity\b", re.sub(r"\belectricity grid\b", "", positive)):
+            plan.categories.append(TransactionCategory.ELECTRICITY)
     return plan
+
+
+def selected_attachment_request(question):
+    return bool(
+        re.search(r"\b(?:pdfs?|attachments?|attached files)\b", question, re.I)
+        and re.search(r"\b(?:these|those|their|them|the emails|the attachments)\b", question, re.I)
+    )
+
+
+def attachment_followup(question, previous):
+    """A selected-evidence action inherits saved scope, never previous instructions."""
+    if not selected_attachment_request(question):
+        return None
+    saved = (previous or {}).get("plan")
+    plan = QueryPlan.model_validate(saved) if saved else QueryPlan(intent="ATTACHMENT_ANALYSIS")
+    return plan.model_copy(
+        update={
+            "intent": "ATTACHMENT_ANALYSIS",
+            "action": "ANALYZE_ATTACHMENTS",
+            "evidence_mode": "REQUIRE",
+            "evidence_requirements": ["ATTACHMENT"],
+            "constraints": [],
+            "clarification": None,
+        }
+    )
 
 
 async def interpret(model, question, *, previous=None, today=None):
     today = today or datetime.now(ZoneInfo("Europe/Madrid")).date()
+    selected = attachment_followup(question, previous)
+    if selected is not None:
+        return selected
     if not re.search(
         r"\b(these|those|them|that payment|this payment|this Paytrail)\b", question, re.I
     ):
@@ -325,7 +443,16 @@ async def interpret(model, question, *, previous=None, today=None):
                     "Preserve ALL constraints including locations, dates, context, "
                     "categories, concepts,"
                     "merchants, transport modes and requested evidence. Include "
-                    "verbatim constraint spans."
+                    "verbatim constraint spans, including original spelling. "
+                    "Absent dates mean all imported history for transaction questions. "
+                    "Clarification must be null unless a user answer is genuinely needed; "
+                    "never put commentary about the plan in clarification. "
+                    "Distinguish current classification from evidence suggesting another label. "
+                    "Exclusions are negative filters, never positive categories or contexts. "
+                    "Tax relevance is TAX_SUGGESTION, never the tax concept. "
+                    "Use GAPS evidence mode for weak/missing evidence and INSPECT for why "
+                    "a payment occurred. These modes retain payments with missing evidence. "
+                    "Do not claim to detect evidence conflicts without comparing evidence. "
                     "Locations are not merchants. Travel/journeys map to TRAVEL; "
                     "flight/train/bus are"
                     "additional concepts when specified. Two periods imply comparison "

@@ -8,6 +8,7 @@
 <section id="correction" hidden aria-label="Transaction correction"></section>
 <div id="result" hidden aria-label="Answer"><div id="badges" aria-label="Evidence status"></div>
 <section><h2 id="answer-heading" tabindex="-1">Answer</h2><p id="answer"></p><ul id="breakdown"></ul></section>
+<section id="evidence-comparison" hidden aria-label="Evidence comparison"></section>
 <section id="result-records" hidden><div class="result-heading"><h2>Results</h2><div><button id="analyze-attachments" type="button" hidden>Analyze email PDFs</button><button id="export-results" type="button">Export CSV</button></div></div><p id="result-count" class="review-guidance"></p><div id="readable-results"></div></section>
 <section id="narrowing" hidden><h2>Refine your question</h2><ul id="suggestions"></ul></section>
 <section id="warnings" class="note" aria-label="Evidence limitations"><p id="coverage-note"></p><p id="review-note"></p><ul id="limits"></ul></section>
@@ -27,6 +28,7 @@ function show(data){
  resultRows=TapioAsk.rows(data);el('result-records').hidden=!resultRows.length;TapioAsk.render(el('readable-results'),resultRows);el('result-count').textContent=(resultRows.length>50?'Showing 50 of '+resultRows.length:resultRows.length+' retrieved records')+'. CSV exports the retrieved rows and their evidence status.';
  list('suggestions',data.suggestions||[]);el('narrowing').hidden=!(data.suggestions||[]).length;
  el('badges').replaceChildren();for(const state of data.evidence_states){const badge=document.createElement('span');badge.className='badge';badge.textContent=Tapio.label(state);el('badges').append(badge)}
+ TapioAsk.comparison(el('evidence-comparison'),details.evidence_comparison);
  el('answer').textContent=data.direct_answer||data.answer;list('breakdown',data.relevant_breakdown||[]);
  el('coverage-note').textContent=data.coverage_note||'';el('review-note').textContent=data.human_review_note||'';
  list('limits',[...new Set([...(details.main_limitations||[]),...(data.limitations||[])])]);el('warnings').hidden=!(data.coverage_note||data.human_review_note||el('limits').children.length);

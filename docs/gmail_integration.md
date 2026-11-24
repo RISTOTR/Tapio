@@ -5,13 +5,28 @@ Tapio uses the official Gmail API behind a local Python adapter and stdio MCP se
 ## Local OAuth setup
 
 1. Enable Gmail API in your Google Cloud project.
-2. Configure Google Auth Platform. For an External testing app, keep Testing and add your exact Google account under Audience → Test users.
+2. Configure Google Auth Platform. For ongoing single-user use, prefer Personal mode with the same Google account that will authorize Gmail. External Testing is suitable for temporary development; add the account under Audience → Test users.
 3. Create a Desktop app OAuth client and save its downloaded JSON as `.private/gmail/client_secret.json`.
 4. From the repository root run `.venv/bin/python -m integrations.gmail.auth --authorize`, and complete browser consent.
 
 The only requested scope is `https://www.googleapis.com/auth/gmail.readonly`. Saved scopes, returned grants and Google's actual access-token scope are checked against that exact singleton. Missing or broader scopes stop access. Tokens are written atomically with mode 0600 to `.private/gmail/token.json`. Never paste credentials into chat or commit them. MCP startup does not silently launch consent.
 
 Google documents the [installed-app setup](https://developers.google.com/workspace/gmail/api/quickstart/python), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes) and [testing-app verification exception](https://developers.google.com/identity/protocols/oauth2/production-readiness/brand-verification#projects-used-in-dev-test-stage). Testing apps can have limited refresh-token lifetimes; reauthorize when needed.
+
+For ongoing personal use, Google's [Personal mode setup](https://support.google.com/cloud/answer/15544987?hl=en)
+removes the seven-day Testing token expiry and restricts authorization to the account
+that created the app. Existing External projects cannot be converted: create a new
+Personal project and Desktop client, enable Gmail API, and download its credentials.
+Keep the existing working credentials until the replacement is checked. Point
+`TAPIO_GMAIL_CLIENT_SECRET` at the new private JSON and `TAPIO_GMAIL_TOKEN` at a **new**
+private token path, then run the authorization command once and restart TAPIO.
+Using a new token path prevents an existing valid token from continuing to use the
+old client. Keep `gmail.readonly`; no broader scope is needed. This removes routine
+Testing expiry, but revocation and account security changes can still require consent.
+
+A healthy connection can still return unlinked candidate receipts. Check the source
+status: `used` means Gmail returned evidence; `authentication required` means consent
+needs attention. A lack of confirmed transaction-to-receipt links is not a Gmail outage.
 
 `GmailSettings` supports environment or `.env` overrides: `TAPIO_GMAIL_CLIENT_SECRET`, `TAPIO_GMAIL_TOKEN`, `TAPIO_GMAIL_CACHE`, `TAPIO_GMAIL_EVIDENCE`. Paths are operator configuration, not agent arguments. Keep overrides outside version control.
 

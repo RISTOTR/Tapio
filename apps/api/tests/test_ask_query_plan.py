@@ -54,9 +54,9 @@ def test_tax_travel_scope_repaired_without_broadening(question):
     assert p.periods[0].date_from == date(2026, 1, 1)
 
 
-def test_forestry_journey_without_year_asks_one_clarification():
+def test_forestry_journey_without_year_uses_all_history():
     p = validate_plan("Forestry journey to Finland", QueryPlan(intent="TRANSACTION_SEARCH"), TODAY)
-    assert p.clarification and p.contexts == ["FORESTRY"] and p.categories == ["TRAVEL"]
+    assert not p.clarification and p.contexts == ["FORESTRY"] and p.categories == ["TRAVEL"]
 
 
 def test_missing_year_not_silently_invented():
@@ -351,7 +351,12 @@ def test_gmail_sender_match_alone_does_not_establish_receipt_coverage(monkeypatc
     result = asyncio.run(
         answers.execute(None, p, "forestry receipts in Gmail 2026", None, tmp_path)
     )
-    assert not any(r.get("transaction_id") for r in result.supporting_records)
+    payments = [r for r in result.supporting_records if r.get("transaction_id")]
+    assert len(payments) == 1
+    assert not payments[0].get("evidence_match")
+    assert not payments[0].get("supporting_evidence")
+    assert "No confirmed receipt link" in payments[0]["check_next"]
+    assert "0 have linked evidence" in result.answer
     assert result.failure_category == "MATCHING_RECORDS_INSUFFICIENT_EVIDENCE"
 
 

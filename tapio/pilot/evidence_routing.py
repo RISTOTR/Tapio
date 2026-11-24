@@ -5,6 +5,7 @@ answers, accept evidence, download attachments, or change Gmail/source records.
 """
 
 import asyncio
+import calendar
 import re
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -345,6 +346,42 @@ def accepted_answer(question, records):
             end = accepted_answer("contract end", records)
             return start + " " + end if start and end else None
         return None
+    # New-contract terms must never be confused with a previous contract's expiry notice.
+    terms = set()
+    for record in records:
+        if record.get("source") != "Stored email evidence":
+            continue
+        fields = record.get("accepted_fields", {})
+        start = fields.get("new_contract.start_date")
+        duration = fields.get("new_contract.duration_months")
+        if fields.get("new_contract.contract_type") == "FIXED_TERM" and start and duration:
+            try:
+                day = date.fromisoformat(start)
+                months = int(duration)
+                if not 0 < months <= 120:
+                    continue
+                index = day.year * 12 + day.month - 1 + months
+                end = date(
+                    index // 12,
+                    index % 12 + 1,
+                    min(day.day, calendar.monthrange(index // 12, index % 12 + 1)[1]),
+                )
+                terms.add((start, months, (end - timedelta(days=1)).isoformat()))
+            except (ValueError, TypeError):
+                continue
+    if len(terms) == 1:
+        start, months, end = next(iter(terms))
+        if requested == "end":
+            return (
+                f"The fixed term runs through {end}, calculated from the accepted "
+                f"start date {start} and duration of {months} months. "
+                "This is the fixed-term end, not proof that the contract automatically terminates."
+            )
+        return f"The stored accepted contract start date is {start}."
+    if len(terms) > 1:
+        return (
+            "The selected evidence contains different fixed-term contracts. Specify which contract."
+        )
     values = []
     subjects = set()
     for record in records:

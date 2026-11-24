@@ -33,7 +33,27 @@ def concept_terms(concept):
         "flight": ["flight", "airline", "finnair", "ryanair", "norwegian", "lento"],
         "train": ["train", "rail", "vr", "juna"],
         "bus": ["bus", "matkahuolto", "onnibus", "linja-auto"],
-        "travel": ["travel", "journey", "trip", "matka"],
+        "travel": [
+            "travel",
+            "journey",
+            "trip",
+            "matka",
+            "flight",
+            "airline",
+            "finnair",
+            "ryanair",
+            "norwegian",
+            "lento",
+            "train",
+            "rail",
+            "vr",
+            "juna",
+            "bus",
+            "matkahuolto",
+            "onnibus",
+            "hotel",
+            "booking",
+        ],
     }
     key = normalize_text(concept).rstrip("s")
     if key in transport:
@@ -45,12 +65,14 @@ def included(row, plan):
     """Independent post-retrieval scope check; do not broaden on zero matches."""
     day = date.fromisoformat(row["booking_date"])
     return (
-        (
-            any(p.date_from <= day <= p.date_to for p in plan.periods)
-            or (not plan.periods and bool(plan.merchants))
-        )
+        (any(p.date_from <= day <= p.date_to for p in plan.periods) or not plan.periods)
         and (not plan.contexts or row["business_context"] in plan.contexts)
         and (not plan.categories or row["category"] in plan.categories)
+        and not any(
+            (e.category is None or row["category"] == e.category)
+            and (e.context is None or row["business_context"] == e.context)
+            for e in plan.exclusions
+        )
         and (not plan.expense_only or row["category"] not in {"TAX", "TRANSFER"})
         and (plan.action != "TAX_SUGGESTION" or Decimal(row["amount"]) < 0)
     )
@@ -77,6 +99,8 @@ def transactions(db, plan):
             "field_authority": getattr(review, "field_authority", None) if confirmed else None,
             "source": "Local bank transaction",
             "source_file": tx.source_file,
+            "source_system": (tx.raw_source or {}).get("source_system"),
+            "source_account": (tx.raw_source or {}).get("source_account"),
             "tax_treatment": None,
             "message": tx.message,
             "payment_reference": tx.reference,
